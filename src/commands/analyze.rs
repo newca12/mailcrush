@@ -43,7 +43,10 @@ fn print_json_summary(summary: &mailcrush::MailSummary) -> Result<(), MailCrushE
     for (i, part) in summary.parts.iter().enumerate() {
         let comma = if i < summary.parts.len() - 1 { "," } else { "" };
         println!("    {{");
-        println!("      \"content_type\": \"{}\",", escape_json(&part.content_type));
+        println!(
+            "      \"content_type\": \"{}\",",
+            escape_json(&part.content_type)
+        );
         if let Some(filename) = &part.filename {
             println!("      \"filename\": \"{}\",", escape_json(filename));
         } else {

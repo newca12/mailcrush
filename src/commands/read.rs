@@ -78,9 +78,12 @@ pub fn run(
             ));
         }
 
-        let placeholder_offset =
-            u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-                as usize;
+        let placeholder_offset = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         let algo_byte = data[offset];
@@ -93,7 +96,7 @@ pub fn run(
                 return Err(MailCrushError::ParseError(format!(
                     "Unknown compression algorithm: {}",
                     algo_byte
-                )))
+                )));
             }
         };
         offset += 1;
@@ -107,7 +110,7 @@ pub fn run(
                 return Err(MailCrushError::ParseError(format!(
                     "Unknown encoding: {}",
                     encoding_byte
-                )))
+                )));
             }
         };
         offset += 1;
@@ -164,7 +167,7 @@ pub fn run(
 
     // Reconstruct the email
     let compressor = EmailCompressor::new(6);
-    
+
     // Sort parts by placeholder offset for proper reconstruction
     let mut indexed_parts: Vec<(usize, &PartMeta)> = parts.iter().enumerate().collect();
     indexed_parts.sort_by_key(|(_, p)| p.placeholder_offset);
@@ -176,7 +179,8 @@ pub fn run(
     for (_, part) in &indexed_parts {
         // Copy structure data up to this placeholder
         if part.placeholder_offset > structure_pos {
-            reconstructed.extend_from_slice(&structure_data[structure_pos..part.placeholder_offset]);
+            reconstructed
+                .extend_from_slice(&structure_data[structure_pos..part.placeholder_offset]);
         }
         structure_pos = part.placeholder_offset;
 
@@ -212,7 +216,7 @@ pub fn run(
         let content = String::from_utf8_lossy(&reconstructed);
         println!("📧 Email Headers");
         println!("{}", "─".repeat(60));
-        
+
         for line in content.lines() {
             if line.is_empty() {
                 // End of headers
@@ -249,15 +253,17 @@ fn encode_base64(data: &[u8]) -> Vec<u8> {
 fn print_email_summary(raw_content: &[u8]) -> Result<(), MailCrushError> {
     let message = mail_parser::MessageParser::default()
         .parse(raw_content)
-        .ok_or_else(|| MailCrushError::ParseError("Failed to parse decompressed email".to_string()))?;
+        .ok_or_else(|| {
+            MailCrushError::ParseError("Failed to parse decompressed email".to_string())
+        })?;
 
     println!("📧 Decompressed Email");
     println!("{}", "═".repeat(60));
-    
+
     // Headers
     println!("\n📋 Headers:");
     println!("{}", "─".repeat(60));
-    
+
     if let Some(subject) = message.subject() {
         println!("Subject: {}", subject);
     }
@@ -284,7 +290,7 @@ fn print_email_summary(raw_content: &[u8]) -> Result<(), MailCrushError> {
     // Body preview
     println!("\n📝 Body Preview:");
     println!("{}", "─".repeat(60));
-    
+
     if let Some(text_body) = message.body_text(0) {
         let preview: String = text_body.chars().take(500).collect();
         println!("{}", preview);
@@ -306,9 +312,7 @@ fn print_email_summary(raw_content: &[u8]) -> Result<(), MailCrushError> {
     // Attachments
     let attachments: Vec<(String, usize)> = message
         .attachments()
-        .filter_map(|a| {
-            a.attachment_name().map(|n| (n.to_string(), a.len()))
-        })
+        .filter_map(|a| a.attachment_name().map(|n| (n.to_string(), a.len())))
         .collect();
 
     if !attachments.is_empty() {

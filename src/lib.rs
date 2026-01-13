@@ -10,8 +10,7 @@ pub mod utils;
 
 pub use analyzer::{MailAnalyzer, MailPartSummary, MailSummary, ReconstructionPart};
 pub use compressor::{
-    CompressionAlgorithm, CompressionReport, CompressedPart, 
-    EmailCompressor, PartCompressionReport,
+    CompressedPart, CompressionAlgorithm, CompressionReport, EmailCompressor, PartCompressionReport,
 };
 pub use error::MailCrushError;
-pub use utils::{collect_email_files, BatchStats};
+pub use utils::{BatchStats, collect_email_files};

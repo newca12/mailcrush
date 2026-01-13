@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use mailcrush::{collect_email_files, BatchStats, MailCrushError};
+use mailcrush::{BatchStats, MailCrushError, collect_email_files};
 
 mod commands;
 
@@ -191,8 +191,7 @@ fn setup_logging(verbose: bool, debug: bool) {
         .with_line_number(false)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
 }
 
 fn main() -> Result<(), MailCrushError> {
@@ -236,7 +235,9 @@ fn main() -> Result<(), MailCrushError> {
                     "Cannot specify --output with multiple files. Use a directory as output instead.".to_string()
                 ));
             }
-            run_batch(&files, |file| compress::run(file, output.as_deref(), level, dry_run))?;
+            run_batch(&files, |file| {
+                compress::run(file, output.as_deref(), level, dry_run)
+            })?;
         }
         Commands::Extract {
             path,
@@ -248,7 +249,7 @@ fn main() -> Result<(), MailCrushError> {
             let files = collect_email_files(&path, recursive)?;
             if files.len() > 1 && part.is_some() {
                 return Err(MailCrushError::ConfigError(
-                    "Cannot specify --part with multiple files.".to_string()
+                    "Cannot specify --part with multiple files.".to_string(),
                 ));
             }
             run_batch(&files, |file| extract::run(file, &output_dir, part, all))?;

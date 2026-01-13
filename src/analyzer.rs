@@ -369,11 +369,12 @@ impl MailSummary {
             "  Potential size after decoding: {} bytes",
             self.total_size.saturating_sub(base64_overhead)
         );
-        
+
         if self.total_size > 0 {
             println!(
                 "  Potential compression ratio: {:.1}% of original",
-                ((self.total_size.saturating_sub(base64_overhead)) as f64 / self.total_size as f64) * 100.0
+                ((self.total_size.saturating_sub(base64_overhead)) as f64 / self.total_size as f64)
+                    * 100.0
             );
         }
 
@@ -402,7 +403,13 @@ impl MailSummary {
         println!("  Offset ranges:");
 
         for (i, (start, end)) in self.raw_offsets.iter().enumerate() {
-            println!("    Part {}: {}..{} ({} bytes)", i + 1, start, end, end - start);
+            println!(
+                "    Part {}: {}..{} ({} bytes)",
+                i + 1,
+                start,
+                end,
+                end - start
+            );
         }
     }
 

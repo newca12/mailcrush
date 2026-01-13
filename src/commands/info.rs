@@ -16,9 +16,11 @@ pub fn run(file: &Path) -> Result<(), MailCrushError> {
     println!("Subject:     {}", summary.subject);
     println!("From:        {}", summary.from);
     println!("Date:        {}", summary.date);
-    println!("Size:        {:.2} KB ({} bytes)", 
-             summary.total_size as f64 / 1024.0,
-             summary.total_size);
+    println!(
+        "Size:        {:.2} KB ({} bytes)",
+        summary.total_size as f64 / 1024.0,
+        summary.total_size
+    );
     println!("Parts:       {}", summary.parts.len());
     println!("Attachments: {}", summary.attachment_count);
 

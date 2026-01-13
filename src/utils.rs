@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MailCrushError;
 
 /// Collect email files from a path (file or directory)
-/// 
+///
 /// If the path is a file, returns a vector containing just that file.
 /// If the path is a directory, returns all .eml files found recursively.
 pub fn collect_email_files(path: &Path, recursive: bool) -> Result<Vec<PathBuf>, MailCrushError> {
@@ -23,7 +23,7 @@ pub fn collect_email_files(path: &Path, recursive: bool) -> Result<Vec<PathBuf>,
 
     let mut files = Vec::new();
     collect_files_recursive(path, recursive, &mut files)?;
-    
+
     files.sort();
     Ok(files)
 }
@@ -78,8 +78,10 @@ impl BatchStats {
     pub fn print_summary(&self) {
         if self.total > 1 {
             println!();
-            println!("📊 Batch Summary: {} processed, {} succeeded, {} failed",
-                     self.total, self.success, self.failed);
+            println!(
+                "📊 Batch Summary: {} processed, {} succeeded, {} failed",
+                self.total, self.success, self.failed
+            );
         }
     }
 }

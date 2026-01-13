@@ -36,7 +36,12 @@ pub fn run(
         vec![(idx, &summary.parts[idx - 1])]
     } else if all {
         // Extract all parts
-        summary.parts.iter().enumerate().map(|(i, p)| (i + 1, p)).collect()
+        summary
+            .parts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i + 1, p))
+            .collect()
     } else {
         // Extract only attachments
         summary
@@ -78,13 +83,13 @@ pub fn run(
                 // For now, write the raw (possibly encoded) data
                 // TODO: Decode Base64/QuotedPrintable before writing
                 fs::write(&output_path, data)?;
-                
+
                 println!("  ✅ {} ({} bytes)", filename, data.len());
-                
+
                 if part.is_base64 {
                     println!("     ⚠️  Note: Data is still Base64 encoded");
                 }
-                
+
                 extracted_count += 1;
             }
             Err(e) => {
@@ -94,14 +99,17 @@ pub fn run(
     }
 
     println!("{}", "─".repeat(50));
-    println!("📊 Extracted {} of {} part(s)", extracted_count, total_parts);
+    println!(
+        "📊 Extracted {} of {} part(s)",
+        extracted_count, total_parts
+    );
 
     Ok(())
 }
 
 fn guess_extension(content_type: &str) -> &'static str {
     let lower = content_type.to_lowercase();
-    
+
     if lower.contains("text/plain") {
         "txt"
     } else if lower.contains("text/html") {

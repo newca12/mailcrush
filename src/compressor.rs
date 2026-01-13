@@ -11,9 +11,9 @@ use std::fmt;
 use std::io::{Read, Write};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use flate2::Compression as GzCompression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression as GzCompression;
 use mail_parser::{Encoding, MessageParser, MimeHeaders};
 use sha2::{Digest, Sha256};
 
@@ -128,12 +128,18 @@ impl CompressionReport {
 
     /// Count verified parts
     pub fn verified_count(&self) -> usize {
-        self.part_reports.iter().filter(|r| r.reconstruction_verified).count()
+        self.part_reports
+            .iter()
+            .filter(|r| r.reconstruction_verified)
+            .count()
     }
 
     /// Count failed parts
     pub fn failed_count(&self) -> usize {
-        self.part_reports.iter().filter(|r| !r.reconstruction_verified).count()
+        self.part_reports
+            .iter()
+            .filter(|r| !r.reconstruction_verified)
+            .count()
     }
 
     /// Print a detailed report
@@ -144,44 +150,79 @@ impl CompressionReport {
 
         println!("\n📋 EMAIL INFO:");
         println!("  Subject: {}", self.subject);
-        println!("  Original size: {} bytes ({:.2} KB)", 
-                 self.original_size, self.original_size as f64 / 1024.0);
-        println!("  Compressed size: {} bytes ({:.2} KB)", 
-                 self.compressed_size, self.compressed_size as f64 / 1024.0);
-        println!("  Compression ratio: {:.1}%", self.overall_savings_percent());
+        println!(
+            "  Original size: {} bytes ({:.2} KB)",
+            self.original_size,
+            self.original_size as f64 / 1024.0
+        );
+        println!(
+            "  Compressed size: {} bytes ({:.2} KB)",
+            self.compressed_size,
+            self.compressed_size as f64 / 1024.0
+        );
+        println!(
+            "  Compression ratio: {:.1}%",
+            self.overall_savings_percent()
+        );
 
         println!("\n✅ VERIFICATION:");
-        println!("  Full email reconstruction: {}", 
-                 if self.full_reconstruction_verified { "✓ VERIFIED" } else { "✗ FAILED" });
-        println!("  Parts verified: {}/{}", self.verified_count(), self.part_reports.len());
+        println!(
+            "  Full email reconstruction: {}",
+            if self.full_reconstruction_verified {
+                "✓ VERIFIED"
+            } else {
+                "✗ FAILED"
+            }
+        );
+        println!(
+            "  Parts verified: {}/{}",
+            self.verified_count(),
+            self.part_reports.len()
+        );
         if self.failed_count() > 0 {
             println!("  Parts failed: {} ⚠️", self.failed_count());
         }
 
         println!("\n🔍 PART DETAILS:");
         println!("{}", "-".repeat(80));
-        println!("{:>4} | {:30} | {:10} | {:>10} | {:>10} | {:>8} | {}",
-                 "#", "Content-Type", "Algorithm", "Original", "Compressed", "Savings", "Status");
+        println!(
+            "{:>4} | {:30} | {:10} | {:>10} | {:>10} | {:>8} | {}",
+            "#", "Content-Type", "Algorithm", "Original", "Compressed", "Savings", "Status"
+        );
         println!("{}", "-".repeat(80));
 
         for report in &self.part_reports {
             let name = if let Some(ref filename) = report.filename {
-                format!("{} ({})", &report.content_type[..report.content_type.len().min(15)], filename)
+                format!(
+                    "{} ({})",
+                    &report.content_type[..report.content_type.len().min(15)],
+                    filename
+                )
             } else {
                 report.content_type.clone()
             };
-            let name = if name.len() > 30 { format!("{}...", &name[..27]) } else { name };
-            
-            let status = if report.reconstruction_verified { "✓" } else { "✗" };
-            
-            println!("{:>4} | {:30} | {:10} | {:>10} | {:>10} | {:>7.1}% | {}",
-                     report.part_index + 1,
-                     name,
-                     report.algorithm.to_string(),
-                     format!("{} B", report.original_encoded_size),
-                     format!("{} B", report.compressed_size),
-                     report.savings_percent(),
-                     status);
+            let name = if name.len() > 30 {
+                format!("{}...", &name[..27])
+            } else {
+                name
+            };
+
+            let status = if report.reconstruction_verified {
+                "✓"
+            } else {
+                "✗"
+            };
+
+            println!(
+                "{:>4} | {:30} | {:10} | {:>10} | {:>10} | {:>7.1}% | {}",
+                report.part_index + 1,
+                name,
+                report.algorithm.to_string(),
+                format!("{} B", report.original_encoded_size),
+                format!("{} B", report.compressed_size),
+                report.savings_percent(),
+                status
+            );
         }
         println!("{}", "-".repeat(80));
 
@@ -194,10 +235,12 @@ impl CompressionReport {
         }
 
         // Print failed parts details
-        let failed_parts: Vec<_> = self.part_reports.iter()
+        let failed_parts: Vec<_> = self
+            .part_reports
+            .iter()
             .filter(|r| !r.reconstruction_verified)
             .collect();
-        
+
         if !failed_parts.is_empty() {
             println!("\n❌ FAILED PARTS DETAILS:");
             for report in failed_parts {
@@ -211,15 +254,19 @@ impl CompressionReport {
         }
 
         println!("\n📊 SUMMARY:");
-        println!("  Total savings: {} bytes ({:.1}%)", 
-                 self.original_size.saturating_sub(self.compressed_size),
-                 self.overall_savings_percent());
-        println!("  Verification: {}", 
-                 if self.full_reconstruction_verified && self.failed_count() == 0 {
-                     "✓ All parts verified successfully"
-                 } else {
-                     "⚠️ Some parts failed verification"
-                 });
+        println!(
+            "  Total savings: {} bytes ({:.1}%)",
+            self.original_size.saturating_sub(self.compressed_size),
+            self.overall_savings_percent()
+        );
+        println!(
+            "  Verification: {}",
+            if self.full_reconstruction_verified && self.failed_count() == 0 {
+                "✓ All parts verified successfully"
+            } else {
+                "⚠️ Some parts failed verification"
+            }
+        );
     }
 }
 
@@ -273,7 +320,7 @@ impl EmailCompressor {
         }
 
         // Already compressed formats - skip compression
-        if ct_lower.contains("zip") 
+        if ct_lower.contains("zip")
             || ct_lower.contains("gzip")
             || ct_lower.contains("compressed")
             || ct_lower.contains("rar")
@@ -286,8 +333,8 @@ impl EmailCompressor {
 
         // Images that are already compressed
         if ct_lower.starts_with("image/") {
-            if ct_lower.contains("png") 
-                || ct_lower.contains("jpeg") 
+            if ct_lower.contains("png")
+                || ct_lower.contains("jpeg")
                 || ct_lower.contains("jpg")
                 || ct_lower.contains("gif")
                 || ct_lower.contains("webp")
@@ -312,7 +359,7 @@ impl EmailCompressor {
         }
 
         // PDF and office documents - use Zstd
-        if ct_lower.contains("pdf") 
+        if ct_lower.contains("pdf")
             || ct_lower.contains("msword")
             || ct_lower.contains("spreadsheet")
             || ct_lower.contains("presentation")
@@ -326,43 +373,54 @@ impl EmailCompressor {
     }
 
     /// Compress data with the specified algorithm
-    pub fn compress(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>, MailCrushError> {
+    pub fn compress(
+        &self,
+        data: &[u8],
+        algorithm: CompressionAlgorithm,
+    ) -> Result<Vec<u8>, MailCrushError> {
         match algorithm {
             CompressionAlgorithm::None => Ok(data.to_vec()),
-            CompressionAlgorithm::Lz4 => {
-                Ok(lz4_flex::compress_prepend_size(data))
-            }
+            CompressionAlgorithm::Lz4 => Ok(lz4_flex::compress_prepend_size(data)),
             CompressionAlgorithm::Zstd => {
                 let level = self.compression_level as i32;
-                zstd::encode_all(std::io::Cursor::new(data), level)
-                    .map_err(|e| MailCrushError::ConfigError(format!("Zstd compression failed: {}", e)))
+                zstd::encode_all(std::io::Cursor::new(data), level).map_err(|e| {
+                    MailCrushError::ConfigError(format!("Zstd compression failed: {}", e))
+                })
             }
             CompressionAlgorithm::Gzip => {
-                let mut encoder = GzEncoder::new(Vec::new(), GzCompression::new(self.compression_level as u32));
-                encoder.write_all(data)
+                let mut encoder = GzEncoder::new(
+                    Vec::new(),
+                    GzCompression::new(self.compression_level as u32),
+                );
+                encoder
+                    .write_all(data)
                     .map_err(|e| MailCrushError::IoError(e))?;
-                encoder.finish()
-                    .map_err(|e| MailCrushError::IoError(e))
+                encoder.finish().map_err(|e| MailCrushError::IoError(e))
             }
         }
     }
 
     /// Decompress data with the specified algorithm
-    pub fn decompress(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>, MailCrushError> {
+    pub fn decompress(
+        &self,
+        data: &[u8],
+        algorithm: CompressionAlgorithm,
+    ) -> Result<Vec<u8>, MailCrushError> {
         match algorithm {
             CompressionAlgorithm::None => Ok(data.to_vec()),
-            CompressionAlgorithm::Lz4 => {
-                lz4_flex::decompress_size_prepended(data)
-                    .map_err(|e| MailCrushError::ConfigError(format!("LZ4 decompression failed: {}", e)))
-            }
+            CompressionAlgorithm::Lz4 => lz4_flex::decompress_size_prepended(data).map_err(|e| {
+                MailCrushError::ConfigError(format!("LZ4 decompression failed: {}", e))
+            }),
             CompressionAlgorithm::Zstd => {
-                zstd::decode_all(std::io::Cursor::new(data))
-                    .map_err(|e| MailCrushError::ConfigError(format!("Zstd decompression failed: {}", e)))
+                zstd::decode_all(std::io::Cursor::new(data)).map_err(|e| {
+                    MailCrushError::ConfigError(format!("Zstd decompression failed: {}", e))
+                })
             }
             CompressionAlgorithm::Gzip => {
                 let mut decoder = GzDecoder::new(data);
                 let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed)
+                decoder
+                    .read_to_end(&mut decompressed)
                     .map_err(|e| MailCrushError::IoError(e))?;
                 Ok(decompressed)
             }
@@ -379,12 +437,14 @@ impl EmailCompressor {
     /// Decode base64 content
     fn decode_base64(data: &[u8]) -> Result<Vec<u8>, MailCrushError> {
         // Remove whitespace from base64 data
-        let cleaned: Vec<u8> = data.iter()
+        let cleaned: Vec<u8> = data
+            .iter()
             .filter(|&&b| !b.is_ascii_whitespace())
             .copied()
             .collect();
-        
-        BASE64_STANDARD.decode(&cleaned)
+
+        BASE64_STANDARD
+            .decode(&cleaned)
             .map_err(|e| MailCrushError::ParseError(format!("Base64 decode failed: {}", e)))
     }
 
@@ -393,7 +453,7 @@ impl EmailCompressor {
         // Encode with line wrapping at 76 characters (MIME standard)
         let encoded = BASE64_STANDARD.encode(data);
         let mut result = Vec::with_capacity(encoded.len() + encoded.len() / 76);
-        
+
         for (i, chunk) in encoded.as_bytes().chunks(76).enumerate() {
             if i > 0 {
                 result.extend_from_slice(b"\r\n");
@@ -407,7 +467,7 @@ impl EmailCompressor {
     fn decode_quoted_printable(data: &[u8]) -> Result<Vec<u8>, MailCrushError> {
         let mut result = Vec::with_capacity(data.len());
         let mut i = 0;
-        
+
         while i < data.len() {
             if data[i] == b'=' {
                 if i + 2 < data.len() {
@@ -419,11 +479,12 @@ impl EmailCompressor {
                         i += 2;
                         continue;
                     }
-                    
+
                     // Decode hex pair
-                    let hex_str = std::str::from_utf8(&data[i + 1..i + 3])
-                        .map_err(|e| MailCrushError::ParseError(format!("Invalid QP encoding: {}", e)))?;
-                    
+                    let hex_str = std::str::from_utf8(&data[i + 1..i + 3]).map_err(|e| {
+                        MailCrushError::ParseError(format!("Invalid QP encoding: {}", e))
+                    })?;
+
                     if let Ok(byte) = u8::from_str_radix(hex_str, 16) {
                         result.push(byte);
                         i += 3;
@@ -437,7 +498,7 @@ impl EmailCompressor {
                 i += 1;
             }
         }
-        
+
         Ok(result)
     }
 
@@ -445,7 +506,7 @@ impl EmailCompressor {
     fn encode_quoted_printable(data: &[u8]) -> Vec<u8> {
         let mut result = Vec::with_capacity(data.len() * 3);
         let mut line_len = 0;
-        
+
         for &byte in data {
             let encoded = if byte == b'\t' || byte == b' ' {
                 // Space and tab are allowed unless at end of line
@@ -460,22 +521,22 @@ impl EmailCompressor {
                 // Encode as =XX
                 format!("={:02X}", byte).into_bytes()
             };
-            
+
             // Handle line length (soft line break at 76 chars)
             if line_len + encoded.len() > 75 && byte != b'\r' && byte != b'\n' {
                 result.extend_from_slice(b"=\r\n");
                 line_len = 0;
             }
-            
+
             if byte == b'\n' {
                 line_len = 0;
             } else {
                 line_len += encoded.len();
             }
-            
+
             result.extend(encoded);
         }
-        
+
         result
     }
 
@@ -502,11 +563,13 @@ impl EmailCompressor {
         // Get raw part data
         let offset_start = part.offset_body as usize;
         let offset_end = part.offset_end as usize;
-        
+
         if offset_end > raw_content.len() {
             return Err(MailCrushError::InvalidStructure(format!(
                 "Part offset out of bounds: {}-{} (content len: {})",
-                offset_start, offset_end, raw_content.len()
+                offset_start,
+                offset_end,
+                raw_content.len()
             )));
         }
 
@@ -518,7 +581,7 @@ impl EmailCompressor {
         } else {
             &raw_content[offset_start..offset_end]
         };
-        
+
         let original_encoded_size = if is_multipart {
             0 // Don't count multipart container as data
         } else {
@@ -545,7 +608,7 @@ impl EmailCompressor {
         } else {
             self.select_algorithm(&content_type, &decoded_data)
         };
-        
+
         let compressed_data = self.compress(&decoded_data, algorithm)?;
         let compressed_size = compressed_data.len();
 
@@ -579,7 +642,7 @@ impl EmailCompressor {
             compressed_size,
             original_hash,
             reconstructed_hash: String::new(), // Will be filled during verification
-            reconstruction_verified: false,     // Will be set during verification
+            reconstruction_verified: false,    // Will be set during verification
             error_message: None,
         };
 
@@ -593,12 +656,8 @@ impl EmailCompressor {
 
         // Re-encode if it was originally base64 or quoted-printable
         let reconstructed = match compressed.original_encoding {
-            Encoding::Base64 if compressed.was_base64_decoded => {
-                Self::encode_base64(&decompressed)
-            }
-            Encoding::QuotedPrintable => {
-                Self::encode_quoted_printable(&decompressed)
-            }
+            Encoding::Base64 if compressed.was_base64_decoded => Self::encode_base64(&decompressed),
+            Encoding::QuotedPrintable => Self::encode_quoted_printable(&decompressed),
             _ => decompressed,
         };
 
@@ -643,7 +702,7 @@ impl EmailCompressor {
                         .content_type()
                         .map(|ct| format!("{}/{:?}", ct.ctype(), ct.subtype()))
                         .unwrap_or_else(|| "unknown".to_string());
-                    
+
                     part_reports.push(PartCompressionReport {
                         part_index: part_idx,
                         content_type,
@@ -666,7 +725,11 @@ impl EmailCompressor {
         // Verify reconstruction of each part
         for (i, compressed) in compressed_parts.iter().enumerate() {
             // Skip verification for multipart containers (they have no body content)
-            if compressed.content_type.to_lowercase().starts_with("multipart/") {
+            if compressed
+                .content_type
+                .to_lowercase()
+                .starts_with("multipart/")
+            {
                 part_reports[i].reconstructed_hash = compressed.original_hash.clone();
                 part_reports[i].reconstruction_verified = true;
                 continue;
@@ -675,7 +738,7 @@ impl EmailCompressor {
             match self.reconstruct_part(compressed) {
                 Ok(reconstructed) => {
                     let reconstructed_hash = Self::hash_data(&reconstructed);
-                    
+
                     // For verification, we compare decoded content (not raw encoding)
                     // because base64 line wrapping might differ
                     let decompressed = self.decompress(&compressed.data, compressed.algorithm)?;
@@ -688,14 +751,13 @@ impl EmailCompressor {
                     };
 
                     let verified = decompressed == original_decoded;
-                    
+
                     part_reports[i].reconstructed_hash = reconstructed_hash;
                     part_reports[i].reconstruction_verified = verified;
-                    
+
                     if !verified {
-                        part_reports[i].error_message = Some(
-                            "Decoded content mismatch after reconstruction".to_string()
-                        );
+                        part_reports[i].error_message =
+                            Some("Decoded content mismatch after reconstruction".to_string());
                     }
                 }
                 Err(e) => {
@@ -708,13 +770,16 @@ impl EmailCompressor {
 
         // Calculate full reconstruction verification
         let all_parts_verified = part_reports.iter().all(|r| r.reconstruction_verified);
-        
+
         // Try to reconstruct the full email
         let mut reconstructed_email = raw_content.to_vec();
         let mut reconstruction_success = true;
 
         // Reconstruct parts in reverse order to maintain offset validity
-        let mut parts_with_offsets: Vec<_> = message.parts.iter().enumerate()
+        let mut parts_with_offsets: Vec<_> = message
+            .parts
+            .iter()
+            .enumerate()
             .map(|(i, p)| (i, p.offset_body as usize, p.offset_end as usize))
             .collect();
         parts_with_offsets.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by offset descending
@@ -724,11 +789,14 @@ impl EmailCompressor {
             if offset_start > reconstructed_email.len() || offset_end > reconstructed_email.len() {
                 tracing::warn!(
                     "Skipping part {} reconstruction: offsets ({}, {}) out of bounds for email length {}",
-                    part_idx, offset_start, offset_end, reconstructed_email.len()
+                    part_idx,
+                    offset_start,
+                    offset_end,
+                    reconstructed_email.len()
                 );
                 continue;
             }
-            
+
             if let Some(compressed) = compressed_parts.iter().find(|c| c.part_index == part_idx) {
                 match self.reconstruct_part(compressed) {
                     Ok(reconstructed_part) => {
@@ -747,7 +815,7 @@ impl EmailCompressor {
         }
 
         let reconstructed_email_hash = Self::hash_data(&reconstructed_email);
-        
+
         // For full verification, compare decoded content of all parts
         // The raw email might differ due to base64 line wrapping differences
         let full_reconstruction_verified = all_parts_verified && reconstruction_success;
@@ -765,7 +833,10 @@ impl EmailCompressor {
     }
 
     /// Get compressed parts for storage (returns the compressed data structure)
-    pub fn get_compressed_parts(&self, raw_content: &[u8]) -> Result<Vec<CompressedPart>, MailCrushError> {
+    pub fn get_compressed_parts(
+        &self,
+        raw_content: &[u8],
+    ) -> Result<Vec<CompressedPart>, MailCrushError> {
         if raw_content.is_empty() {
             return Err(MailCrushError::EmptyMail);
         }
@@ -800,10 +871,15 @@ mod tests {
     #[test]
     fn test_compression_algorithms() {
         let compressor = EmailCompressor::new(5);
-        let data = b"This is some test data that should compress well. Repeated text repeated text.";
+        let data =
+            b"This is some test data that should compress well. Repeated text repeated text.";
 
-        for algo in [CompressionAlgorithm::None, CompressionAlgorithm::Lz4, 
-                     CompressionAlgorithm::Zstd, CompressionAlgorithm::Gzip] {
+        for algo in [
+            CompressionAlgorithm::None,
+            CompressionAlgorithm::Lz4,
+            CompressionAlgorithm::Zstd,
+            CompressionAlgorithm::Gzip,
+        ] {
             let compressed = compressor.compress(data, algo).unwrap();
             let decompressed = compressor.decompress(&compressed, algo).unwrap();
             assert_eq!(data.to_vec(), decompressed, "Failed for {:?}", algo);
@@ -837,7 +913,7 @@ mod tests {
             compressor_high.select_algorithm("text/plain", &[0u8; 50]),
             CompressionAlgorithm::None
         );
-        
+
         // Multipart should not be compressed
         assert_eq!(
             compressor_high.select_algorithm("multipart/mixed", &[0u8; 500]),

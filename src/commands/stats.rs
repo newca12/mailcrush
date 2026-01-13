@@ -119,7 +119,7 @@ pub fn run_aggregate(files: &[std::path::PathBuf]) -> Result<(), MailCrushError>
         total_base64_overhead as f64 / 1024.0 / 1024.0
     );
     println!();
-    
+
     if total_size > 0 {
         let potential_size = total_size.saturating_sub(total_base64_overhead);
         let savings_pct = total_base64_overhead as f64 / total_size as f64 * 100.0;
@@ -137,18 +137,9 @@ pub fn run_aggregate(files: &[std::path::PathBuf]) -> Result<(), MailCrushError>
     if total_files > 0 {
         println!();
         println!("📈 Averages per email:");
-        println!(
-            "   Size:        {:>10} bytes",
-            total_size / total_files
-        );
-        println!(
-            "   Parts:       {:>10}",
-            total_parts / total_files
-        );
-        println!(
-            "   Attachments: {:>10}",
-            total_attachments / total_files
-        );
+        println!("   Size:        {:>10} bytes", total_size / total_files);
+        println!("   Parts:       {:>10}", total_parts / total_files);
+        println!("   Attachments: {:>10}", total_attachments / total_files);
     }
 
     Ok(())
