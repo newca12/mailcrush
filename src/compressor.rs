@@ -270,6 +270,20 @@ impl CompressionReport {
     }
 }
 
+/// Metadata for base64 encoding preservation
+/// Stores line structure to enable byte-identical reconstruction
+#[derive(Debug, Clone, Default)]
+pub struct Base64Meta {
+    /// Length of each line (excluding line ending)
+    pub line_lengths: Vec<usize>,
+    /// Line ending used for each line (true = CRLF, false = LF)
+    pub line_endings: Vec<bool>,
+    /// Whether there's a trailing line ending after the last line
+    pub has_trailing_newline: bool,
+    /// Trailing whitespace on each line (after base64 chars, before line ending)
+    pub trailing_whitespace: Vec<Vec<u8>>,
+}
+
 /// Compressed part data
 #[derive(Debug, Clone)]
 pub struct CompressedPart {
@@ -289,6 +303,8 @@ pub struct CompressedPart {
     pub original_hash: String,
     /// Original raw bytes (for reconstruction verification)
     pub original_raw: Vec<u8>,
+    /// Base64 metadata for byte-identical reconstruction
+    pub base64_meta: Option<Base64Meta>,
 }
 
 /// Email compressor that handles the full compression pipeline
@@ -434,21 +450,118 @@ impl EmailCompressor {
         format!("{:x}", hasher.finalize())
     }
 
-    /// Decode base64 content
-    fn decode_base64(data: &[u8]) -> Result<Vec<u8>, MailCrushError> {
-        // Remove whitespace from base64 data
-        let cleaned: Vec<u8> = data
-            .iter()
-            .filter(|&&b| !b.is_ascii_whitespace())
-            .copied()
-            .collect();
+    /// Decode base64 content and extract metadata for byte-identical reconstruction
+    fn decode_base64_with_meta(data: &[u8]) -> Result<(Vec<u8>, Base64Meta), MailCrushError> {
+        let mut meta = Base64Meta::default();
+        let mut cleaned = Vec::with_capacity(data.len());
+        let mut current_line_len = 0;
+        let mut current_trailing_ws = Vec::new();
+        let mut in_trailing_ws = false;
+        let mut i = 0;
 
-        BASE64_STANDARD
+        while i < data.len() {
+            let b = data[i];
+
+            if b == b'\r' && i + 1 < data.len() && data[i + 1] == b'\n' {
+                // CRLF line ending
+                meta.line_lengths.push(current_line_len);
+                meta.line_endings.push(true);
+                meta.trailing_whitespace.push(current_trailing_ws.clone());
+                current_line_len = 0;
+                current_trailing_ws.clear();
+                in_trailing_ws = false;
+                i += 2;
+            } else if b == b'\n' {
+                // LF line ending
+                meta.line_lengths.push(current_line_len);
+                meta.line_endings.push(false);
+                meta.trailing_whitespace.push(current_trailing_ws.clone());
+                current_line_len = 0;
+                current_trailing_ws.clear();
+                in_trailing_ws = false;
+                i += 1;
+            } else if b == b' ' || b == b'\t' {
+                // Whitespace - could be trailing or embedded
+                in_trailing_ws = true;
+                current_trailing_ws.push(b);
+                i += 1;
+            } else {
+                // Base64 character
+                if in_trailing_ws {
+                    // Whitespace was embedded, not trailing - count it as part of line
+                    current_line_len += current_trailing_ws.len();
+                    current_trailing_ws.clear();
+                    in_trailing_ws = false;
+                }
+                cleaned.push(b);
+                current_line_len += 1;
+                i += 1;
+            }
+        }
+
+        // Handle last line (if no trailing newline)
+        if current_line_len > 0 || !current_trailing_ws.is_empty() {
+            meta.line_lengths.push(current_line_len);
+            meta.line_endings.push(false); // No line ending for last line without newline
+            meta.trailing_whitespace.push(current_trailing_ws);
+            meta.has_trailing_newline = false;
+        } else if !meta.line_lengths.is_empty() {
+            meta.has_trailing_newline = true;
+        }
+
+        let decoded = BASE64_STANDARD
             .decode(&cleaned)
-            .map_err(|e| MailCrushError::ParseError(format!("Base64 decode failed: {}", e)))
+            .map_err(|e| MailCrushError::ParseError(format!("Base64 decode failed: {}", e)))?;
+
+        Ok((decoded, meta))
     }
 
-    /// Encode data to base64
+    /// Decode base64 content (legacy method without metadata)
+    fn decode_base64(data: &[u8]) -> Result<Vec<u8>, MailCrushError> {
+        let (decoded, _) = Self::decode_base64_with_meta(data)?;
+        Ok(decoded)
+    }
+
+    /// Encode data to base64 using original metadata for byte-identical output
+    fn encode_base64_with_meta(data: &[u8], meta: &Base64Meta) -> Vec<u8> {
+        let encoded = BASE64_STANDARD.encode(data);
+        let encoded_bytes = encoded.as_bytes();
+        let mut result = Vec::with_capacity(encoded.len() + meta.line_lengths.len() * 2);
+        let mut pos = 0;
+
+        for (i, &line_len) in meta.line_lengths.iter().enumerate() {
+            // Add base64 characters for this line
+            let end = (pos + line_len).min(encoded_bytes.len());
+            if pos < encoded_bytes.len() {
+                result.extend_from_slice(&encoded_bytes[pos..end]);
+            }
+            pos = end;
+
+            // Add trailing whitespace if any
+            if i < meta.trailing_whitespace.len() {
+                result.extend_from_slice(&meta.trailing_whitespace[i]);
+            }
+
+            // Add line ending (except for last line without trailing newline)
+            let is_last_line = i == meta.line_lengths.len() - 1;
+            if !is_last_line || meta.has_trailing_newline {
+                if i < meta.line_endings.len() && meta.line_endings[i] {
+                    result.extend_from_slice(b"\r\n");
+                } else if !is_last_line || meta.has_trailing_newline {
+                    result.extend_from_slice(b"\n");
+                }
+            }
+        }
+
+        // Handle any remaining encoded data (shouldn't happen with correct metadata)
+        if pos < encoded_bytes.len() {
+            result.extend_from_slice(&encoded_bytes[pos..]);
+        }
+
+        result
+    }
+
+    /// Encode data to base64 with standard 76-char line wrapping
     fn encode_base64(data: &[u8]) -> Vec<u8> {
         // Encode with line wrapping at 76 characters (MIME standard)
         let encoded = BASE64_STANDARD.encode(data);
@@ -589,14 +702,15 @@ impl EmailCompressor {
         };
 
         // Decode if necessary (skip for multipart)
-        let (decoded_data, was_decoded) = if is_multipart {
-            (Vec::new(), false)
+        let (decoded_data, was_decoded, base64_meta) = if is_multipart {
+            (Vec::new(), false, None)
         } else if is_base64 {
-            (Self::decode_base64(raw_part_data)?, true)
+            let (decoded, meta) = Self::decode_base64_with_meta(raw_part_data)?;
+            (decoded, true, Some(meta))
         } else if is_qp {
-            (Self::decode_quoted_printable(raw_part_data)?, true)
+            (Self::decode_quoted_printable(raw_part_data)?, true, None)
         } else {
-            (raw_part_data.to_vec(), false)
+            (raw_part_data.to_vec(), false, None)
         };
 
         let decoded_size = decoded_data.len();
@@ -628,6 +742,7 @@ impl EmailCompressor {
             data: compressed_data,
             original_hash: original_hash.clone(),
             original_raw,
+            base64_meta,
         };
 
         let report = PartCompressionReport {
@@ -656,7 +771,14 @@ impl EmailCompressor {
 
         // Re-encode if it was originally base64 or quoted-printable
         let reconstructed = match compressed.original_encoding {
-            Encoding::Base64 if compressed.was_base64_decoded => Self::encode_base64(&decompressed),
+            Encoding::Base64 if compressed.was_base64_decoded => {
+                // Use metadata for byte-identical reconstruction if available
+                if let Some(ref meta) = compressed.base64_meta {
+                    Self::encode_base64_with_meta(&decompressed, meta)
+                } else {
+                    Self::encode_base64(&decompressed)
+                }
+            }
             Encoding::QuotedPrintable => Self::encode_quoted_printable(&decompressed),
             _ => decompressed,
         };
@@ -866,6 +988,39 @@ mod tests {
         let encoded = EmailCompressor::encode_base64(original);
         let decoded = EmailCompressor::decode_base64(&encoded).unwrap();
         assert_eq!(original.to_vec(), decoded);
+    }
+
+    #[test]
+    fn test_base64_byte_identical_roundtrip() {
+        // Test with various line endings and structures
+        let test_cases = [
+            // Standard CRLF with 76-char lines
+            b"SGVsbG8sIFdvcmxkIQ==\r\n".to_vec(),
+            // LF only
+            b"SGVsbG8sIFdvcmxkIQ==\n".to_vec(),
+            // No trailing newline
+            b"SGVsbG8sIFdvcmxkIQ==".to_vec(),
+            // Mixed line lengths with CRLF
+            b"SGVsbG8s\r\nIFdvcmxkIQ==\r\n".to_vec(),
+            // Mixed line lengths with LF
+            b"SGVsbG8s\nIFdvcmxkIQ==\n".to_vec(),
+            // Trailing whitespace before newline
+            b"SGVsbG8sIFdvcmxkIQ== \r\n".to_vec(),
+            // Longer content with various line lengths
+            b"VGhpcyBpcyBhIGxvbmdlciB0ZXN0IG1lc3NhZ2UgdGhhdCBzcGFucyBtdWx0aXBs\r\nZSBsaW5lcyBvZiBiYXNlNjQgZW5jb2RlZCBjb250ZW50Lg==\r\n".to_vec(),
+        ];
+
+        for (i, original_encoded) in test_cases.iter().enumerate() {
+            let (decoded, meta) = EmailCompressor::decode_base64_with_meta(original_encoded).unwrap();
+            let re_encoded = EmailCompressor::encode_base64_with_meta(&decoded, &meta);
+            assert_eq!(
+                original_encoded, &re_encoded,
+                "Test case {} failed:\nOriginal: {:?}\nRe-encoded: {:?}",
+                i, 
+                String::from_utf8_lossy(original_encoded),
+                String::from_utf8_lossy(&re_encoded)
+            );
+        }
     }
 
     #[test]
