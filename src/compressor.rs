@@ -720,6 +720,15 @@ impl EmailCompressor {
         parts_with_offsets.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by offset descending
 
         for (part_idx, offset_start, offset_end) in parts_with_offsets {
+            // Skip if offsets are out of bounds for current reconstructed email
+            if offset_start > reconstructed_email.len() || offset_end > reconstructed_email.len() {
+                tracing::warn!(
+                    "Skipping part {} reconstruction: offsets ({}, {}) out of bounds for email length {}",
+                    part_idx, offset_start, offset_end, reconstructed_email.len()
+                );
+                continue;
+            }
+            
             if let Some(compressed) = compressed_parts.iter().find(|c| c.part_index == part_idx) {
                 match self.reconstruct_part(compressed) {
                     Ok(reconstructed_part) => {
