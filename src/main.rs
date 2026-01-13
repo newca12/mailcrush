@@ -11,7 +11,7 @@ use mailcrush::{collect_email_files, BatchStats, MailCrushError};
 
 mod commands;
 
-use commands::{analyze, compress, extract, info as info_cmd, list, stats, validate};
+use commands::{analyze, compress, extract, info as info_cmd, list, read, stats, validate};
 
 /// MailCrush - High-efficiency mail lossless compression tool
 #[derive(Parser)]
@@ -153,6 +153,25 @@ enum Commands {
         #[arg(long)]
         aggregate: bool,
     },
+
+    /// Read and decompress a compressed mail file (.mcr)
+    Read {
+        /// Path to compressed mail file (.mcr)
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+
+        /// Output file path for decompressed email
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Output raw email content
+        #[arg(long)]
+        raw: bool,
+
+        /// Show headers only
+        #[arg(long)]
+        headers_only: bool,
+    },
 }
 
 fn setup_logging(verbose: bool, debug: bool) {
@@ -249,6 +268,14 @@ fn main() -> Result<(), MailCrushError> {
             } else {
                 run_batch(&files, |file| stats::run(file))?;
             }
+        }
+        Commands::Read {
+            file,
+            output,
+            raw,
+            headers_only,
+        } => {
+            read::run(&file, output.as_deref(), raw, headers_only)?;
         }
     }
 

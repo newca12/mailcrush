@@ -5,5 +5,6 @@ pub mod compress;
 pub mod extract;
 pub mod info;
 pub mod list;
+pub mod read;
 pub mod stats;
 pub mod validate;
