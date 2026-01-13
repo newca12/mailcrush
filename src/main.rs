@@ -4,14 +4,14 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{info, Level};
+use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use mailcrush::{MailAnalyzer, MailCrushError};
+use mailcrush::{collect_email_files, BatchStats, MailCrushError};
 
 mod commands;
 
-use commands::{analyze, compress, extract, info as info_cmd, list};
+use commands::{analyze, compress, extract, info as info_cmd, list, stats, validate};
 
 /// MailCrush - High-efficiency mail lossless compression tool
 #[derive(Parser)]
@@ -35,9 +35,13 @@ struct Cli {
 enum Commands {
     /// Analyze email structure and show detailed information
     Analyze {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
 
         /// Show brief summary only
         #[arg(short, long)]
@@ -50,16 +54,24 @@ enum Commands {
 
     /// Show basic information about an email
     Info {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
     },
 
     /// List all parts/attachments in an email
     List {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
 
         /// Show only attachments
         #[arg(short, long)]
@@ -72,11 +84,15 @@ enum Commands {
 
     /// Compress an email for efficient storage
     Compress {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
 
-        /// Output file path
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
+
+        /// Output file or directory path
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -91,15 +107,19 @@ enum Commands {
 
     /// Extract attachments from an email
     Extract {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
 
         /// Output directory for extracted files
         #[arg(short, long, default_value = ".")]
         output_dir: PathBuf,
 
-        /// Extract specific part by index (1-based)
+        /// Extract specific part by index (1-based, only for single file)
         #[arg(short, long)]
         part: Option<usize>,
 
@@ -110,16 +130,28 @@ enum Commands {
 
     /// Validate email structure
     Validate {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
     },
 
     /// Show compression statistics for an email
     Stats {
-        /// Path to the email file (.eml)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
+
+        /// Show aggregate statistics only (for multiple files)
+        #[arg(long)]
+        aggregate: bool,
     },
 }
 
@@ -150,101 +182,112 @@ fn main() -> Result<(), MailCrushError> {
     setup_logging(cli.verbose, cli.debug);
 
     match cli.command {
-        Commands::Analyze { file, brief, format } => {
-            analyze::run(&file, brief, &format)?;
+        Commands::Analyze {
+            path,
+            recursive,
+            brief,
+            format,
+        } => {
+            let files = collect_email_files(&path, recursive)?;
+            run_batch(&files, |file| analyze::run(file, brief, &format))?;
         }
-        Commands::Info { file } => {
-            info_cmd::run(&file)?;
+        Commands::Info { path, recursive } => {
+            let files = collect_email_files(&path, recursive)?;
+            run_batch(&files, |file| info_cmd::run(file))?;
         }
         Commands::List {
-            file,
+            path,
+            recursive,
             attachments,
             base64,
         } => {
-            list::run(&file, attachments, base64)?;
+            let files = collect_email_files(&path, recursive)?;
+            run_batch(&files, |file| list::run(file, attachments, base64))?;
         }
         Commands::Compress {
-            file,
+            path,
+            recursive,
             output,
             level,
             dry_run,
         } => {
-            compress::run(&file, output.as_deref(), level, dry_run)?;
+            let files = collect_email_files(&path, recursive)?;
+            if files.len() > 1 && output.is_some() {
+                return Err(MailCrushError::ConfigError(
+                    "Cannot specify --output with multiple files. Use a directory as output instead.".to_string()
+                ));
+            }
+            run_batch(&files, |file| compress::run(file, output.as_deref(), level, dry_run))?;
         }
         Commands::Extract {
-            file,
+            path,
+            recursive,
             output_dir,
             part,
             all,
         } => {
-            extract::run(&file, &output_dir, part, all)?;
+            let files = collect_email_files(&path, recursive)?;
+            if files.len() > 1 && part.is_some() {
+                return Err(MailCrushError::ConfigError(
+                    "Cannot specify --part with multiple files.".to_string()
+                ));
+            }
+            run_batch(&files, |file| extract::run(file, &output_dir, part, all))?;
         }
-        Commands::Validate { file } => {
-            validate_email(&file)?;
+        Commands::Validate { path, recursive } => {
+            let files = collect_email_files(&path, recursive)?;
+            run_batch(&files, |file| validate::run(file))?;
         }
-        Commands::Stats { file } => {
-            show_stats(&file)?;
+        Commands::Stats {
+            path,
+            recursive,
+            aggregate,
+        } => {
+            let files = collect_email_files(&path, recursive)?;
+            if aggregate && files.len() > 1 {
+                stats::run_aggregate(&files)?;
+            } else {
+                run_batch(&files, |file| stats::run(file))?;
+            }
         }
     }
 
     Ok(())
 }
 
-fn validate_email(file: &PathBuf) -> Result<(), MailCrushError> {
-    info!("Validating email: {:?}", file);
+/// Run a command on multiple files with batch statistics
+fn run_batch<F>(files: &[PathBuf], mut op: F) -> Result<(), MailCrushError>
+where
+    F: FnMut(&std::path::Path) -> Result<(), MailCrushError>,
+{
+    if files.is_empty() {
+        println!("📭 No email files found.");
+        return Ok(());
+    }
 
-    match MailAnalyzer::load_and_analyze(file) {
-        Ok(summary) => {
-            println!("✅ Email is valid");
-            println!("   Subject: {}", summary.subject);
-            println!("   Parts: {}", summary.parts.len());
-            println!("   Attachments: {}", summary.attachment_count);
-            Ok(())
+    let mut stats = BatchStats::new();
+    stats.total = files.len();
+
+    let show_separator = files.len() > 1;
+
+    for (i, file) in files.iter().enumerate() {
+        if show_separator {
+            if i > 0 {
+                println!();
+            }
+            println!("━━━ {} ━━━", file.display());
         }
-        Err(e) => {
-            println!("❌ Email validation failed: {}", e);
-            Err(e)
+
+        match op(file) {
+            Ok(()) => stats.record_success(),
+            Err(e) => {
+                eprintln!("❌ Error processing {:?}: {}", file, e);
+                stats.record_failure();
+            }
         }
     }
-}
 
-fn show_stats(file: &PathBuf) -> Result<(), MailCrushError> {
-    info!("Showing stats for: {:?}", file);
-
-    let summary = MailAnalyzer::load_and_analyze(file)?;
-
-    println!("📊 COMPRESSION STATISTICS");
-    println!("{}", "=".repeat(50));
-
-    let total_size = summary.total_size;
-    let attachment_size: usize = summary
-        .parts
-        .iter()
-        .filter(|p| p.is_attachment)
-        .map(|p| p.encoded_size)
-        .sum();
-
-    let base64_overhead: usize = summary
-        .parts
-        .iter()
-        .filter(|p| p.is_base64)
-        .map(|p| p.encoded_size.saturating_sub(p.size))
-        .sum();
-
-    let header_size = summary
-        .parts
-        .first()
-        .map(|p| p.offset_start)
-        .unwrap_or(0);
-
-    println!("Total size:        {:>10} bytes ({:.2} KB)", total_size, total_size as f64 / 1024.0);
-    println!("Header size:       {:>10} bytes", header_size);
-    println!("Attachment size:   {:>10} bytes", attachment_size);
-    println!("Base64 overhead:   {:>10} bytes", base64_overhead);
-    println!();
-    println!("Potential savings: {:>10} bytes ({:.1}%)", 
-             base64_overhead,
-             if total_size > 0 { base64_overhead as f64 / total_size as f64 * 100.0 } else { 0.0 });
+    stats.print_summary();
 
     Ok(())
 }

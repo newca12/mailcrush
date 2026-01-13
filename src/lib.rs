@@ -5,6 +5,8 @@
 
 pub mod analyzer;
 pub mod error;
+pub mod utils;
 
 pub use analyzer::{MailAnalyzer, MailPartSummary, MailSummary, ReconstructionPart};
 pub use error::MailCrushError;
+pub use utils::{collect_email_files, BatchStats};
