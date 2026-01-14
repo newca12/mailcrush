@@ -97,12 +97,13 @@ pub fn run(
         // Get compressed parts for storage
         let compressed_parts = compressor.get_compressed_parts(&raw_content)?;
 
-        // MCR v4 format - efficient storage for byte-identical decompression:
-        // [4 bytes: magic "MCR4"]
+        // MCR v5 format - with compressed structure data for better compression:
+        // [4 bytes: magic "MCR5"]
         // [4 bytes: original size]
         // [4 bytes: number of content parts]
-        // [4 bytes: structure_data length]
-        // [N bytes: structure_data (email without body content, bodies replaced with placeholders)]
+        // [4 bytes: uncompressed structure_data length (for allocation)]
+        // [4 bytes: compressed structure_data length]
+        // [N bytes: compressed structure_data (zstd compressed)]
         // For each content part:
         //   [4 bytes: placeholder_offset - where in structure_data this part's placeholder is]
         //   [1 byte: algorithm]
@@ -114,7 +115,6 @@ pub fn run(
         //   [64 bytes: sha256 hash]
         //   [4 bytes: base64_meta_length (0 if no metadata)]
         //   [N bytes: base64_meta (serialized: num_lines, then for each line: line_len(u16), is_crlf(u8), ws_len(u8), ws_bytes)]
-        //   [1 byte: has_trailing_newline (for base64)]
 
         // Parse to get offsets
         let message = mail_parser::MessageParser::default()
@@ -170,10 +170,16 @@ pub fn run(
         // Copy remainder of email
         structure_data.extend_from_slice(&raw_content[last_end..]);
 
+        // Compress structure data using zstd for good text compression
+        let compressed_structure =
+            zstd::encode_all(std::io::Cursor::new(&structure_data), level as i32).map_err(|e| {
+                MailCrushError::ConfigError(format!("Failed to compress structure: {}", e))
+            })?;
+
         let mut output_data = Vec::new();
 
-        // Magic number (version 4 - supports byte-identical reconstruction)
-        output_data.extend_from_slice(b"MCR4");
+        // Magic number (version 5 - with compressed structure)
+        output_data.extend_from_slice(b"MCR5");
 
         // Original size
         output_data.extend_from_slice(&(raw_content.len() as u32).to_le_bytes());
@@ -181,9 +187,12 @@ pub fn run(
         // Number of content parts
         output_data.extend_from_slice(&(part_infos.len() as u32).to_le_bytes());
 
-        // Structure data
+        // Structure data - uncompressed length for allocation
         output_data.extend_from_slice(&(structure_data.len() as u32).to_le_bytes());
-        output_data.extend_from_slice(&structure_data);
+
+        // Structure data - compressed length and data
+        output_data.extend_from_slice(&(compressed_structure.len() as u32).to_le_bytes());
+        output_data.extend_from_slice(&compressed_structure);
 
         // Write each content part
         for (i, info) in part_infos.iter().enumerate() {
@@ -280,6 +289,12 @@ pub fn run(
             0.0
         };
 
+        let structure_savings_pct = if structure_data.len() > 0 {
+            (1.0 - compressed_structure.len() as f64 / structure_data.len() as f64) * 100.0
+        } else {
+            0.0
+        };
+
         println!();
         println!("✅ Compressed email saved to: {:?}", output_path);
         println!("   Original size:         {} bytes", raw_content.len());
@@ -289,7 +304,12 @@ pub fn run(
             savings, savings_pct
         );
         println!();
-        println!("   Structure size:        {} bytes", structure_data.len());
+        println!("   Structure original:    {} bytes", structure_data.len());
+        println!(
+            "   Structure compressed:  {} bytes ({:.1}% saved)",
+            compressed_structure.len(),
+            structure_savings_pct
+        );
         println!("   Parts original:        {} bytes", parts_original_size);
         println!("   Parts compressed:      {} bytes", parts_compressed_size);
         if parts_original_size > 0 {

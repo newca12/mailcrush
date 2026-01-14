@@ -29,13 +29,15 @@ pub fn run(
     }
 
     let magic = &data[0..4];
-    let version = if magic == b"MCR4" {
+    let version = if magic == b"MCR5" {
+        5
+    } else if magic == b"MCR4" {
         4
     } else if magic == b"MCR3" {
         3
     } else {
         return Err(MailCrushError::ParseError(format!(
-            "Invalid magic number: expected 'MCR3' or 'MCR4', got '{}'",
+            "Invalid magic number: expected 'MCR3', 'MCR4', or 'MCR5', got '{}'",
             String::from_utf8_lossy(magic)
         )));
     };
@@ -43,22 +45,60 @@ pub fn run(
     // Parse header
     let original_size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
     let num_parts = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
-    let structure_len = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+    let structure_uncompressed_len =
+        u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
 
-    info!(
-        "MCR{} file: original_size={}, num_parts={}, structure_len={}",
-        version, original_size, num_parts, structure_len
-    );
+    // Read structure data - compressed for MCR5, uncompressed for MCR3/MCR4
+    let (structure_data_vec, parts_offset): (Vec<u8>, usize) = if version >= 5 {
+        // MCR5: structure is compressed
+        if data.len() < 20 {
+            return Err(MailCrushError::ParseError(
+                "File too small for MCR5 header".to_string(),
+            ));
+        }
+        let compressed_structure_len =
+            u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
 
-    // Read structure data
-    let structure_start = 16;
-    let structure_end = structure_start + structure_len;
-    if structure_end > data.len() {
-        return Err(MailCrushError::ParseError(
-            "File truncated: structure data extends beyond file".to_string(),
-        ));
-    }
-    let structure_data = &data[structure_start..structure_end];
+        let structure_start = 20;
+        let structure_end = structure_start + compressed_structure_len;
+        if structure_end > data.len() {
+            return Err(MailCrushError::ParseError(
+                "File truncated: compressed structure data extends beyond file".to_string(),
+            ));
+        }
+
+        // Decompress structure
+        let compressed_structure = &data[structure_start..structure_end];
+        let decompressed =
+            zstd::decode_all(std::io::Cursor::new(compressed_structure)).map_err(|e| {
+                MailCrushError::ParseError(format!("Failed to decompress structure: {}", e))
+            })?;
+
+        info!(
+            "MCR{} file: original_size={}, num_parts={}, structure_len={} (compressed: {})",
+            version, original_size, num_parts, structure_uncompressed_len, compressed_structure_len
+        );
+
+        (decompressed, structure_end)
+    } else {
+        // MCR3/MCR4: structure is uncompressed
+        let structure_start = 16;
+        let structure_end = structure_start + structure_uncompressed_len;
+        if structure_end > data.len() {
+            return Err(MailCrushError::ParseError(
+                "File truncated: structure data extends beyond file".to_string(),
+            ));
+        }
+
+        info!(
+            "MCR{} file: original_size={}, num_parts={}, structure_len={}",
+            version, original_size, num_parts, structure_uncompressed_len
+        );
+
+        (data[structure_start..structure_end].to_vec(), structure_end)
+    };
+
+    let structure_data = &structure_data_vec[..];
 
     // Parse parts
     #[derive(Debug)]
@@ -75,7 +115,7 @@ pub fn run(
     }
 
     let mut parts: Vec<PartMeta> = Vec::with_capacity(num_parts);
-    let mut offset = structure_end;
+    let mut offset = parts_offset;
 
     for _ in 0..num_parts {
         if offset + 15 > data.len() {
