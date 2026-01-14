@@ -230,13 +230,29 @@ fn main() -> Result<(), MailCrushError> {
             dry_run,
         } => {
             let files = collect_email_files(&path, recursive)?;
-            if files.len() > 1 && output.is_some() {
-                return Err(MailCrushError::ConfigError(
-                    "Cannot specify --output with multiple files. Use a directory as output instead.".to_string()
-                ));
+            // Filter out .mcr files - we don't want to compress already-compressed files
+            let files: Vec<_> = files
+                .into_iter()
+                .filter(|f| f.extension().map_or(true, |ext| ext != "mcr"))
+                .collect();
+            // If multiple files and output is specified, it must be a directory
+            if files.len() > 1 {
+                if let Some(ref out) = output {
+                    if out.exists() && !out.is_dir() {
+                        return Err(MailCrushError::ConfigError(
+                            "Cannot specify --output as a file with multiple input files. Use a directory as output instead.".to_string()
+                        ));
+                    }
+                }
             }
+            // Determine the base path for relative path computation
+            let base_path = if path.is_dir() {
+                Some(path.as_path())
+            } else {
+                None
+            };
             run_batch(&files, |file| {
-                compress::run(file, output.as_deref(), level, dry_run)
+                compress::run(file, output.as_deref(), base_path, level, dry_run)
             })?;
         }
         Commands::Extract {

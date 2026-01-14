@@ -7,9 +7,16 @@ use tracing::info;
 use mailcrush::{EmailCompressor, MailAnalyzer, MailCrushError};
 
 /// Run the compress command
+///
+/// - `file`: Path to the email file to compress
+/// - `output`: Optional output path (file or directory)
+/// - `base_path`: Base path for computing relative paths when output is a directory
+/// - `level`: Compression level (1-9)
+/// - `dry_run`: If true, only show analysis without compressing
 pub fn run(
     file: &Path,
     output: Option<&Path>,
+    base_path: Option<&Path>,
     level: u8,
     dry_run: bool,
 ) -> Result<(), MailCrushError> {
@@ -83,12 +90,53 @@ pub fn run(
     report.print_detailed_report();
 
     // Determine output path
+    // Output is treated as a directory if:
+    // 1. It already exists and is a directory, OR
+    // 2. It ends with a path separator, OR
+    // 3. We have a base_path (multiple files mode) and it doesn't look like a file with .mcr extension
     let output_path = match output {
-        Some(p) => p.to_path_buf(),
+        Some(p) => {
+            let is_dir_output = p.is_dir()
+                || p.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR)
+                || p.to_string_lossy().ends_with('/')
+                || (base_path.is_some() && p.extension().map_or(true, |ext| ext != "mcr"));
+
+            if is_dir_output {
+                // Output is a directory: preserve input structure with .mcr extension
+                // Compute relative path from base_path to file
+                let relative = if let Some(base) = base_path {
+                    file.strip_prefix(base)
+                        .unwrap_or(file.file_name().map(Path::new).unwrap_or(file))
+                } else {
+                    file.file_name().map(Path::new).unwrap_or(file)
+                };
+
+                // Create output path: output_dir / relative_path + .mcr
+                let out_file = p.join(relative);
+
+                // Append .mcr extension to the full filename (e.g., mail.eml -> mail.eml.mcr)
+                let file_name = out_file
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "output".to_string());
+                let out_file = out_file.with_file_name(format!("{}.mcr", file_name));
+
+                // Ensure parent directories exist
+                if let Some(parent) = out_file.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                out_file
+            } else {
+                p.to_path_buf()
+            }
+        }
         None => {
-            let mut path = file.to_path_buf();
-            path.set_extension("mcr"); // mailcrush format
-            path
+            // Append .mcr extension to the full filename
+            let file_name = file
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "output".to_string());
+            file.with_file_name(format!("{}.mcr", file_name))
         }
     };
 
