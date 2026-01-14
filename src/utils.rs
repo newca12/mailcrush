@@ -60,6 +60,7 @@ pub struct BatchStats {
     pub total: usize,
     pub success: usize,
     pub failed: usize,
+    pub total_time: std::time::Duration,
 }
 
 impl BatchStats {
@@ -73,6 +74,10 @@ impl BatchStats {
 
     pub fn record_failure(&mut self) {
         self.failed += 1;
+    }
+
+    pub fn add_time(&mut self, duration: std::time::Duration) {
+        self.total_time += duration;
     }
 
     pub fn print_summary(&self) {

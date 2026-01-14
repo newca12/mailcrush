@@ -4,6 +4,7 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -103,6 +104,10 @@ enum Commands {
         /// Dry run - show what would be compressed without actually compressing
         #[arg(long)]
         dry_run: bool,
+
+        /// Show timing information
+        #[arg(short, long)]
+        timer: bool,
     },
 
     /// Extract attachments from an email
@@ -171,6 +176,10 @@ enum Commands {
         /// Show headers only
         #[arg(long)]
         headers_only: bool,
+
+        /// Show timing information
+        #[arg(short, long)]
+        timer: bool,
     },
 }
 
@@ -207,11 +216,11 @@ fn main() -> Result<(), MailCrushError> {
             format,
         } => {
             let files = collect_email_files(&path, recursive)?;
-            run_batch(&files, |file| analyze::run(file, brief, &format))?;
+            run_batch(&files, false, |file| analyze::run(file, brief, &format))?;
         }
         Commands::Info { path, recursive } => {
             let files = collect_email_files(&path, recursive)?;
-            run_batch(&files, |file| info_cmd::run(file))?;
+            run_batch(&files, false, |file| info_cmd::run(file))?;
         }
         Commands::List {
             path,
@@ -220,7 +229,7 @@ fn main() -> Result<(), MailCrushError> {
             base64,
         } => {
             let files = collect_email_files(&path, recursive)?;
-            run_batch(&files, |file| list::run(file, attachments, base64))?;
+            run_batch(&files, false, |file| list::run(file, attachments, base64))?;
         }
         Commands::Compress {
             path,
@@ -228,6 +237,7 @@ fn main() -> Result<(), MailCrushError> {
             output,
             level,
             dry_run,
+            timer,
         } => {
             let files = collect_email_files(&path, recursive)?;
             // Filter out .mcr files - we don't want to compress already-compressed files
@@ -251,7 +261,7 @@ fn main() -> Result<(), MailCrushError> {
             } else {
                 None
             };
-            run_batch(&files, |file| {
+            run_batch(&files, timer, |file| {
                 compress::run(file, output.as_deref(), base_path, level, dry_run)
             })?;
         }
@@ -268,11 +278,13 @@ fn main() -> Result<(), MailCrushError> {
                     "Cannot specify --part with multiple files.".to_string(),
                 ));
             }
-            run_batch(&files, |file| extract::run(file, &output_dir, part, all))?;
+            run_batch(&files, false, |file| {
+                extract::run(file, &output_dir, part, all)
+            })?;
         }
         Commands::Validate { path, recursive } => {
             let files = collect_email_files(&path, recursive)?;
-            run_batch(&files, |file| validate::run(file))?;
+            run_batch(&files, false, |file| validate::run(file))?;
         }
         Commands::Stats {
             path,
@@ -283,7 +295,7 @@ fn main() -> Result<(), MailCrushError> {
             if aggregate && files.len() > 1 {
                 stats::run_aggregate(&files)?;
             } else {
-                run_batch(&files, |file| stats::run(file))?;
+                run_batch(&files, false, |file| stats::run(file))?;
             }
         }
         Commands::Read {
@@ -291,8 +303,14 @@ fn main() -> Result<(), MailCrushError> {
             output,
             raw,
             headers_only,
+            timer,
         } => {
+            let start = if timer { Some(Instant::now()) } else { None };
             read::run(&file, output.as_deref(), raw, headers_only)?;
+            if let Some(start) = start {
+                let elapsed = start.elapsed();
+                println!("\n⏱️  Time: {}", format_duration(elapsed));
+            }
         }
     }
 
@@ -300,7 +318,7 @@ fn main() -> Result<(), MailCrushError> {
 }
 
 /// Run a command on multiple files with batch statistics
-fn run_batch<F>(files: &[PathBuf], mut op: F) -> Result<(), MailCrushError>
+fn run_batch<F>(files: &[PathBuf], timer: bool, mut op: F) -> Result<(), MailCrushError>
 where
     F: FnMut(&std::path::Path) -> Result<(), MailCrushError>,
 {
@@ -313,6 +331,7 @@ where
     stats.total = files.len();
 
     let show_separator = files.len() > 1;
+    let batch_start = if timer { Some(Instant::now()) } else { None };
 
     for (i, file) in files.iter().enumerate() {
         if show_separator {
@@ -322,8 +341,17 @@ where
             println!("━━━ {} ━━━", file.display());
         }
 
+        let file_start = if timer { Some(Instant::now()) } else { None };
         match op(file) {
-            Ok(()) => stats.record_success(),
+            Ok(()) => {
+                stats.record_success();
+                if let Some(start) = file_start {
+                    stats.add_time(start.elapsed());
+                    if !show_separator {
+                        println!("⏱️  Time: {}", format_duration(start.elapsed()));
+                    }
+                }
+            }
             Err(e) => {
                 eprintln!("❌ Error processing {:?}: {}", file, e);
                 stats.record_failure();
@@ -332,6 +360,29 @@ where
     }
 
     stats.print_summary();
+    if let Some(start) = batch_start {
+        if files.len() > 1 {
+            let total_elapsed = start.elapsed();
+            println!(
+                "⏱️  Total time: {} ({}/file avg)",
+                format_duration(total_elapsed),
+                format_duration(total_elapsed / files.len() as u32)
+            );
+        }
+    }
 
     Ok(())
+}
+
+/// Format a duration for display
+fn format_duration(d: Duration) -> String {
+    if d.as_secs() >= 60 {
+        let mins = d.as_secs() / 60;
+        let secs = d.as_secs() % 60;
+        format!("{}m {}.{:03}s", mins, secs, d.subsec_millis())
+    } else if d.as_secs() >= 1 {
+        format!("{}.{:03}s", d.as_secs(), d.subsec_millis())
+    } else {
+        format!("{:.3}ms", d.as_secs_f64() * 1000.0)
+    }
 }
