@@ -97,8 +97,8 @@ pub fn run(
         // Get compressed parts for storage
         let compressed_parts = compressor.get_compressed_parts(&raw_content)?;
 
-        // MCR v3 format - efficient storage for decompression:
-        // [4 bytes: magic "MCR3"]
+        // MCR v4 format - efficient storage for byte-identical decompression:
+        // [4 bytes: magic "MCR4"]
         // [4 bytes: original size]
         // [4 bytes: number of content parts]
         // [4 bytes: structure_data length]
@@ -112,6 +112,9 @@ pub fn run(
         //   [4 bytes: compressed_data_length]
         //   [N bytes: compressed_data]
         //   [64 bytes: sha256 hash]
+        //   [4 bytes: base64_meta_length (0 if no metadata)]
+        //   [N bytes: base64_meta (serialized: num_lines, then for each line: line_len(u16), is_crlf(u8), ws_len(u8), ws_bytes)]
+        //   [1 byte: has_trailing_newline (for base64)]
 
         // Parse to get offsets
         let message = mail_parser::MessageParser::default()
@@ -169,8 +172,8 @@ pub fn run(
 
         let mut output_data = Vec::new();
 
-        // Magic number (version 3)
-        output_data.extend_from_slice(b"MCR3");
+        // Magic number (version 4 - supports byte-identical reconstruction)
+        output_data.extend_from_slice(b"MCR4");
 
         // Original size
         output_data.extend_from_slice(&(raw_content.len() as u32).to_le_bytes());
@@ -223,6 +226,38 @@ pub fn run(
             let copy_len = hash_bytes.len().min(64);
             hash_padded[..copy_len].copy_from_slice(&hash_bytes[..copy_len]);
             output_data.extend_from_slice(&hash_padded);
+
+            // Base64 metadata for byte-identical reconstruction
+            if let Some(ref meta) = part.base64_meta {
+                // Serialize base64 metadata
+                let mut meta_bytes = Vec::new();
+                // Number of lines
+                meta_bytes.extend_from_slice(&(meta.line_lengths.len() as u32).to_le_bytes());
+                // For each line: line_len(u16), is_crlf(u8), ws_len(u8), ws_bytes
+                for (i, &line_len) in meta.line_lengths.iter().enumerate() {
+                    meta_bytes.extend_from_slice(&(line_len as u16).to_le_bytes());
+                    meta_bytes.push(if i < meta.line_endings.len() && meta.line_endings[i] {
+                        1
+                    } else {
+                        0
+                    });
+                    let ws = meta
+                        .trailing_whitespace
+                        .get(i)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
+                    meta_bytes.push(ws.len() as u8);
+                    meta_bytes.extend_from_slice(ws);
+                }
+                // has_trailing_newline
+                meta_bytes.push(if meta.has_trailing_newline { 1 } else { 0 });
+
+                output_data.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+                output_data.extend_from_slice(&meta_bytes);
+            } else {
+                // No base64 metadata
+                output_data.extend_from_slice(&0u32.to_le_bytes());
+            }
         }
 
         // Write output file

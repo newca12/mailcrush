@@ -29,12 +29,16 @@ pub fn run(
     }
 
     let magic = &data[0..4];
-    if magic != b"MCR3" {
+    let version = if magic == b"MCR4" {
+        4
+    } else if magic == b"MCR3" {
+        3
+    } else {
         return Err(MailCrushError::ParseError(format!(
-            "Invalid magic number: expected 'MCR3', got '{}'",
+            "Invalid magic number: expected 'MCR3' or 'MCR4', got '{}'",
             String::from_utf8_lossy(magic)
         )));
-    }
+    };
 
     // Parse header
     let original_size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
@@ -42,8 +46,8 @@ pub fn run(
     let structure_len = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
 
     info!(
-        "MCR3 file: original_size={}, num_parts={}, structure_len={}",
-        original_size, num_parts, structure_len
+        "MCR{} file: original_size={}, num_parts={}, structure_len={}",
+        version, original_size, num_parts, structure_len
     );
 
     // Read structure data
@@ -58,6 +62,7 @@ pub fn run(
 
     // Parse parts
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct PartMeta {
         placeholder_offset: usize,
         algorithm: CompressionAlgorithm,
@@ -66,6 +71,7 @@ pub fn run(
         _original_body_len: usize,
         compressed_data: Vec<u8>,
         _hash: String,
+        base64_meta: Option<Base64MetaLocal>,
     }
 
     let mut parts: Vec<PartMeta> = Vec::with_capacity(num_parts);
@@ -154,6 +160,103 @@ pub fn run(
             .to_string();
         offset += 64;
 
+        // Read base64 metadata (MCR4 only)
+        let base64_meta = if version >= 4 {
+            if offset + 4 > data.len() {
+                return Err(MailCrushError::ParseError(
+                    "File truncated: base64 meta length extends beyond file".to_string(),
+                ));
+            }
+            let meta_len = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            if meta_len > 0 {
+                if offset + meta_len > data.len() {
+                    return Err(MailCrushError::ParseError(
+                        "File truncated: base64 metadata extends beyond file".to_string(),
+                    ));
+                }
+                let meta_bytes = &data[offset..offset + meta_len];
+                offset += meta_len;
+
+                // Deserialize base64 metadata
+                let mut meta_offset = 0;
+                if meta_offset + 4 > meta_bytes.len() {
+                    return Err(MailCrushError::ParseError(
+                        "Invalid base64 metadata".to_string(),
+                    ));
+                }
+                let num_lines = u32::from_le_bytes([
+                    meta_bytes[meta_offset],
+                    meta_bytes[meta_offset + 1],
+                    meta_bytes[meta_offset + 2],
+                    meta_bytes[meta_offset + 3],
+                ]) as usize;
+                meta_offset += 4;
+
+                let mut line_lengths = Vec::with_capacity(num_lines);
+                let mut line_endings = Vec::with_capacity(num_lines);
+                let mut trailing_whitespace = Vec::with_capacity(num_lines);
+
+                for _ in 0..num_lines {
+                    if meta_offset + 4 > meta_bytes.len() {
+                        return Err(MailCrushError::ParseError(
+                            "Invalid base64 metadata: truncated line data".to_string(),
+                        ));
+                    }
+                    let line_len =
+                        u16::from_le_bytes([meta_bytes[meta_offset], meta_bytes[meta_offset + 1]])
+                            as usize;
+                    meta_offset += 2;
+
+                    let is_crlf = meta_bytes[meta_offset] != 0;
+                    meta_offset += 1;
+
+                    let ws_len = meta_bytes[meta_offset] as usize;
+                    meta_offset += 1;
+
+                    let ws = if ws_len > 0 {
+                        if meta_offset + ws_len > meta_bytes.len() {
+                            return Err(MailCrushError::ParseError(
+                                "Invalid base64 metadata: truncated whitespace".to_string(),
+                            ));
+                        }
+                        let ws_bytes = meta_bytes[meta_offset..meta_offset + ws_len].to_vec();
+                        meta_offset += ws_len;
+                        ws_bytes
+                    } else {
+                        Vec::new()
+                    };
+
+                    line_lengths.push(line_len);
+                    line_endings.push(is_crlf);
+                    trailing_whitespace.push(ws);
+                }
+
+                let has_trailing_newline = if meta_offset < meta_bytes.len() {
+                    meta_bytes[meta_offset] != 0
+                } else {
+                    false
+                };
+
+                Some(Base64MetaLocal {
+                    line_lengths,
+                    line_endings,
+                    trailing_whitespace,
+                    has_trailing_newline,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         parts.push(PartMeta {
             placeholder_offset,
             algorithm,
@@ -162,6 +265,7 @@ pub fn run(
             _original_body_len: original_body_len,
             compressed_data,
             _hash: hash,
+            base64_meta,
         });
     }
 
@@ -187,14 +291,17 @@ pub fn run(
         // Decompress the part data
         let decompressed = compressor.decompress(&part.compressed_data, part.algorithm)?;
 
-        // Re-encode if necessary
+        // Re-encode if necessary using metadata for byte-identical reconstruction
         let body_data = if part.was_base64_decoded {
-            encode_base64(&decompressed)
-        } else if matches!(part.original_encoding, Encoding::QuotedPrintable) {
-            // For QP, the data was stored decoded, so we need to re-encode
-            // However, the current implementation stores raw data, so just use it
-            decompressed
+            if let Some(ref meta) = part.base64_meta {
+                // Use metadata for byte-identical base64 reconstruction
+                encode_base64_with_meta(&decompressed, meta)
+            } else {
+                // Fallback: use standard encoding (not byte-identical)
+                encode_base64(&decompressed)
+            }
         } else {
+            // Non-base64 content: use raw bytes directly (already byte-identical)
             decompressed
         };
 
@@ -246,6 +353,54 @@ fn encode_base64(data: &[u8]) -> Vec<u8> {
         }
         result.extend_from_slice(chunk);
     }
+    result
+}
+
+/// Base64 metadata for byte-identical reconstruction (local copy for deserialization)
+#[derive(Debug, Clone, Default)]
+struct Base64MetaLocal {
+    line_lengths: Vec<usize>,
+    line_endings: Vec<bool>,
+    trailing_whitespace: Vec<Vec<u8>>,
+    has_trailing_newline: bool,
+}
+
+/// Encode data to base64 using original metadata for byte-identical output
+fn encode_base64_with_meta(data: &[u8], meta: &Base64MetaLocal) -> Vec<u8> {
+    let encoded = BASE64_STANDARD.encode(data);
+    let encoded_bytes = encoded.as_bytes();
+    let mut result = Vec::with_capacity(encoded.len() + meta.line_lengths.len() * 2);
+    let mut pos = 0;
+
+    for (i, &line_len) in meta.line_lengths.iter().enumerate() {
+        // Add base64 characters for this line
+        let end = (pos + line_len).min(encoded_bytes.len());
+        if pos < encoded_bytes.len() {
+            result.extend_from_slice(&encoded_bytes[pos..end]);
+        }
+        pos = end;
+
+        // Add trailing whitespace if any
+        if i < meta.trailing_whitespace.len() {
+            result.extend_from_slice(&meta.trailing_whitespace[i]);
+        }
+
+        // Add line ending (except for last line without trailing newline)
+        let is_last_line = i == meta.line_lengths.len() - 1;
+        if !is_last_line || meta.has_trailing_newline {
+            if i < meta.line_endings.len() && meta.line_endings[i] {
+                result.extend_from_slice(b"\r\n");
+            } else if !is_last_line || meta.has_trailing_newline {
+                result.extend_from_slice(b"\n");
+            }
+        }
+    }
+
+    // Handle any remaining encoded data (shouldn't happen with correct metadata)
+    if pos < encoded_bytes.len() {
+        result.extend_from_slice(&encoded_bytes[pos..]);
+    }
+
     result
 }
 

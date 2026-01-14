@@ -517,6 +517,7 @@ impl EmailCompressor {
     }
 
     /// Decode base64 content (legacy method without metadata)
+    #[allow(dead_code)]
     fn decode_base64(data: &[u8]) -> Result<Vec<u8>, MailCrushError> {
         let (decoded, _) = Self::decode_base64_with_meta(data)?;
         Ok(decoded)
@@ -577,6 +578,7 @@ impl EmailCompressor {
     }
 
     /// Decode quoted-printable content
+    #[allow(dead_code)]
     fn decode_quoted_printable(data: &[u8]) -> Result<Vec<u8>, MailCrushError> {
         let mut result = Vec::with_capacity(data.len());
         let mut i = 0;
@@ -668,7 +670,6 @@ impl EmailCompressor {
         let filename = part.attachment_name().map(|s| s.to_string());
         let encoding = part.encoding;
         let is_base64 = matches!(encoding, Encoding::Base64);
-        let is_qp = matches!(encoding, Encoding::QuotedPrintable);
 
         // Check if this is a multipart container
         let is_multipart = content_type.to_lowercase().starts_with("multipart/");
@@ -702,14 +703,15 @@ impl EmailCompressor {
         };
 
         // Decode if necessary (skip for multipart)
+        // For QP text content: DON'T decode - store raw to preserve byte-identical reconstruction
+        // QP decoding saves minimal space and makes byte-identical reconstruction very difficult
         let (decoded_data, was_decoded, base64_meta) = if is_multipart {
             (Vec::new(), false, None)
         } else if is_base64 {
             let (decoded, meta) = Self::decode_base64_with_meta(raw_part_data)?;
             (decoded, true, Some(meta))
-        } else if is_qp {
-            (Self::decode_quoted_printable(raw_part_data)?, true, None)
         } else {
+            // For QP and non-encoded content: store raw bytes for byte-identical reconstruction
             (raw_part_data.to_vec(), false, None)
         };
 
@@ -861,18 +863,18 @@ impl EmailCompressor {
                 Ok(reconstructed) => {
                     let reconstructed_hash = Self::hash_data(&reconstructed);
 
-                    // For verification, we compare decoded content (not raw encoding)
-                    // because base64 line wrapping might differ
-                    let decompressed = self.decompress(&compressed.data, compressed.algorithm)?;
-                    let original_decoded = if compressed.was_base64_decoded {
-                        Self::decode_base64(&compressed.original_raw)?
-                    } else if matches!(compressed.original_encoding, Encoding::QuotedPrintable) {
-                        Self::decode_quoted_printable(&compressed.original_raw)?
+                    // For verification, compare the reconstructed content to original raw content
+                    // For base64: we decode and re-encode, so compare raw to reconstructed
+                    // For other content (including QP): we store raw, so compare raw bytes directly
+                    let verified = if compressed.was_base64_decoded {
+                        // Base64: compare the reconstructed encoded bytes to original raw
+                        reconstructed == compressed.original_raw
                     } else {
-                        compressed.original_raw.clone()
+                        // Non-base64 (including QP): compare decompressed to original raw
+                        let decompressed =
+                            self.decompress(&compressed.data, compressed.algorithm)?;
+                        decompressed == compressed.original_raw
                     };
-
-                    let verified = decompressed == original_decoded;
 
                     part_reports[i].reconstructed_hash = reconstructed_hash;
                     part_reports[i].reconstruction_verified = verified;
@@ -1011,12 +1013,14 @@ mod tests {
         ];
 
         for (i, original_encoded) in test_cases.iter().enumerate() {
-            let (decoded, meta) = EmailCompressor::decode_base64_with_meta(original_encoded).unwrap();
+            let (decoded, meta) =
+                EmailCompressor::decode_base64_with_meta(original_encoded).unwrap();
             let re_encoded = EmailCompressor::encode_base64_with_meta(&decoded, &meta);
             assert_eq!(
-                original_encoded, &re_encoded,
+                original_encoded,
+                &re_encoded,
                 "Test case {} failed:\nOriginal: {:?}\nRe-encoded: {:?}",
-                i, 
+                i,
                 String::from_utf8_lossy(original_encoded),
                 String::from_utf8_lossy(&re_encoded)
             );
