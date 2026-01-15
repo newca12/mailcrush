@@ -278,7 +278,7 @@ impl CompressionReport {
 /// Stores line structure to enable byte-identical reconstruction
 #[derive(Debug, Clone, Default)]
 pub struct Base64Meta {
-    /// Length of each line (excluding line ending)
+    /// Length of each line (excluding line ending) - counts only base64 chars
     pub line_lengths: Vec<usize>,
     /// Line ending used for each line (true = CRLF, false = LF)
     pub line_endings: Vec<bool>,
@@ -286,6 +286,9 @@ pub struct Base64Meta {
     pub has_trailing_newline: bool,
     /// Trailing whitespace on each line (after base64 chars, before line ending)
     pub trailing_whitespace: Vec<Vec<u8>>,
+    /// Embedded whitespace within each line: Vec of (position, whitespace_bytes)
+    /// Position is in terms of base64 characters (before the whitespace)
+    pub embedded_whitespace: Vec<Vec<(usize, Vec<u8>)>>,
 }
 
 /// Compressed part data
@@ -458,8 +461,9 @@ impl EmailCompressor {
     fn decode_base64_with_meta(data: &[u8]) -> Result<(Vec<u8>, Base64Meta), MailCrushError> {
         let mut meta = Base64Meta::default();
         let mut cleaned = Vec::with_capacity(data.len());
-        let mut current_line_len = 0;
+        let mut current_line_len = 0; // Count of base64 characters only
         let mut current_trailing_ws = Vec::new();
+        let mut current_embedded_ws: Vec<(usize, Vec<u8>)> = Vec::new();
         let mut in_trailing_ws = false;
         let mut i = 0;
 
@@ -471,8 +475,10 @@ impl EmailCompressor {
                 meta.line_lengths.push(current_line_len);
                 meta.line_endings.push(true);
                 meta.trailing_whitespace.push(current_trailing_ws.clone());
+                meta.embedded_whitespace.push(current_embedded_ws.clone());
                 current_line_len = 0;
                 current_trailing_ws.clear();
+                current_embedded_ws.clear();
                 in_trailing_ws = false;
                 i += 2;
             } else if b == b'\n' {
@@ -480,8 +486,10 @@ impl EmailCompressor {
                 meta.line_lengths.push(current_line_len);
                 meta.line_endings.push(false);
                 meta.trailing_whitespace.push(current_trailing_ws.clone());
+                meta.embedded_whitespace.push(current_embedded_ws.clone());
                 current_line_len = 0;
                 current_trailing_ws.clear();
+                current_embedded_ws.clear();
                 in_trailing_ws = false;
                 i += 1;
             } else if b == b' ' || b == b'\t' {
@@ -492,8 +500,9 @@ impl EmailCompressor {
             } else {
                 // Base64 character
                 if in_trailing_ws {
-                    // Whitespace was embedded, not trailing - count it as part of line
-                    current_line_len += current_trailing_ws.len();
+                    // Whitespace was embedded, not trailing - record its position
+                    // Position is the count of base64 chars seen so far on this line
+                    current_embedded_ws.push((current_line_len, current_trailing_ws.clone()));
                     current_trailing_ws.clear();
                     in_trailing_ws = false;
                 }
@@ -508,6 +517,7 @@ impl EmailCompressor {
             meta.line_lengths.push(current_line_len);
             meta.line_endings.push(false); // No line ending for last line without newline
             meta.trailing_whitespace.push(current_trailing_ws);
+            meta.embedded_whitespace.push(current_embedded_ws);
             meta.has_trailing_newline = false;
         } else if !meta.line_lengths.is_empty() {
             meta.has_trailing_newline = true;
@@ -535,12 +545,38 @@ impl EmailCompressor {
         let mut pos = 0;
 
         for (i, &line_len) in meta.line_lengths.iter().enumerate() {
-            // Add base64 characters for this line
-            let end = (pos + line_len).min(encoded_bytes.len());
-            if pos < encoded_bytes.len() {
-                result.extend_from_slice(&encoded_bytes[pos..end]);
+            // Get embedded whitespace for this line (if any)
+            let embedded_ws = if i < meta.embedded_whitespace.len() {
+                &meta.embedded_whitespace[i]
+            } else {
+                &vec![]
+            };
+
+            // Build this line with embedded whitespace inserted at correct positions
+            let line_end = (pos + line_len).min(encoded_bytes.len());
+            let mut line_pos = 0; // Position within this line's base64 chars
+            let mut ws_idx = 0; // Index into embedded_ws
+
+            while pos + line_pos < line_end {
+                // Check if we need to insert embedded whitespace at this position
+                while ws_idx < embedded_ws.len() && embedded_ws[ws_idx].0 == line_pos {
+                    result.extend_from_slice(&embedded_ws[ws_idx].1);
+                    ws_idx += 1;
+                }
+                // Add the base64 character
+                if pos + line_pos < encoded_bytes.len() {
+                    result.push(encoded_bytes[pos + line_pos]);
+                }
+                line_pos += 1;
             }
-            pos = end;
+
+            // Check for any remaining embedded whitespace at end of base64 chars
+            while ws_idx < embedded_ws.len() && embedded_ws[ws_idx].0 == line_pos {
+                result.extend_from_slice(&embedded_ws[ws_idx].1);
+                ws_idx += 1;
+            }
+
+            pos = line_end;
 
             // Add trailing whitespace if any
             if i < meta.trailing_whitespace.len() {
