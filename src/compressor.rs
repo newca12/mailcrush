@@ -191,18 +191,22 @@ impl CompressionReport {
         );
         println!("{}", "-".repeat(80));
 
+        // Helper function to safely truncate a UTF-8 string at character boundarieafely truncate a UTF-8 string at character boundarieafely truncate a UTF-8 string at character boundarieafely truncate a UTF-8 string at character boundaries
+        fn truncate_str(s: &str, max_chars: usize) -> &str {
+            match s.char_indices().nth(max_chars) {
+                Some((idx, _)) => &s[..idx],
+                None => s,
+            }
+        }
+
         for report in &self.part_reports {
             let name = if let Some(ref filename) = report.filename {
-                format!(
-                    "{} ({})",
-                    &report.content_type[..report.content_type.len().min(15)],
-                    filename
-                )
+                format!("{} ({})", truncate_str(&report.content_type, 15), filename)
             } else {
                 report.content_type.clone()
             };
-            let name = if name.len() > 30 {
-                format!("{}...", &name[..27])
+            let name = if name.chars().count() > 30 {
+                format!("{}...", truncate_str(&name, 27))
             } else {
                 name
             };
