@@ -31,7 +31,7 @@ pub fn run(file: &Path, attachments_only: bool, base64_only: bool) -> Result<(),
                 let short_type = part
                     .content_type
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or(&part.content_type);
                 println!(
                     "{:<4} {:<30} {:<15} {} bytes",

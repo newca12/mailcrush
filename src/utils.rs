@@ -84,7 +84,7 @@ fn collect_mcr_files_recursive(
         let path = entry.path();
 
         if path.is_file() {
-            if path.extension().map_or(false, |ext| ext == "mcr") {
+            if path.extension().is_some_and(|ext| ext == "mcr") {
                 files.push(path);
             }
         } else if path.is_dir() && recursive {

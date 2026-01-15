@@ -372,7 +372,7 @@ pub fn run(
                 .to_string_lossy()
                 .ends_with(std::path::MAIN_SEPARATOR)
             || output.to_string_lossy().ends_with('/')
-            || (base_path.is_some() && output.extension().map_or(true, |ext| ext != "eml"));
+            || (base_path.is_some() && output.extension().is_none_or(|ext| ext != "eml"));
 
         let output_path = if is_dir_output {
             // Output is a directory: preserve input structure, remove .mcr extension
@@ -388,7 +388,7 @@ pub fn run(
             let out_file = output.join(relative);
 
             // Remove .mcr extension if present (e.g., mail.eml.mcr -> mail.eml)
-            let out_file = if out_file.extension().map_or(false, |ext| ext == "mcr") {
+            let out_file = if out_file.extension().is_some_and(|ext| ext == "mcr") {
                 out_file.with_extension("")
             } else {
                 out_file

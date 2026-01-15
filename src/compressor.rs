@@ -186,8 +186,8 @@ impl CompressionReport {
         println!("\n🔍 PART DETAILS:");
         println!("{}", "-".repeat(80));
         println!(
-            "{:>4} | {:30} | {:10} | {:>10} | {:>10} | {:>8} | {}",
-            "#", "Content-Type", "Algorithm", "Original", "Compressed", "Savings", "Status"
+            "{:>4} | {:30} | {:10} | {:>10} | {:>10} | {:>8} | Status",
+            "#", "Content-Type", "Algorithm", "Original", "Compressed", "Savings"
         );
         println!("{}", "-".repeat(80));
 
@@ -415,10 +415,8 @@ impl EmailCompressor {
                     Vec::new(),
                     GzCompression::new(self.compression_level as u32),
                 );
-                encoder
-                    .write_all(data)
-                    .map_err(|e| MailCrushError::IoError(e))?;
-                encoder.finish().map_err(|e| MailCrushError::IoError(e))
+                encoder.write_all(data).map_err(MailCrushError::IoError)?;
+                encoder.finish().map_err(MailCrushError::IoError)
             }
         }
     }
@@ -444,7 +442,7 @@ impl EmailCompressor {
                 let mut decompressed = Vec::new();
                 decoder
                     .read_to_end(&mut decompressed)
-                    .map_err(|e| MailCrushError::IoError(e))?;
+                    .map_err(MailCrushError::IoError)?;
                 Ok(decompressed)
             }
         }
@@ -666,7 +664,7 @@ impl EmailCompressor {
             let encoded = if byte == b'\t' || byte == b' ' {
                 // Space and tab are allowed unless at end of line
                 vec![byte]
-            } else if byte >= 33 && byte <= 126 && byte != b'=' {
+            } else if (33..=126).contains(&byte) && byte != b'=' {
                 // Printable ASCII except '='
                 vec![byte]
             } else if byte == b'\r' || byte == b'\n' {
@@ -745,11 +743,23 @@ impl EmailCompressor {
         // Decode if necessary (skip for multipart)
         // For QP text content: DON'T decode - store raw to preserve byte-identical reconstruction
         // QP decoding saves minimal space and makes byte-identical reconstruction very difficult
+        // For base64: try to decode, but if it fails (malformed base64), fall back to raw storage
         let (decoded_data, was_decoded, base64_meta) = if is_multipart {
             (Vec::new(), false, None)
         } else if is_base64 {
-            let (decoded, meta) = Self::decode_base64_with_meta(raw_part_data)?;
-            (decoded, true, Some(meta))
+            // Try to decode base64, fall back to raw storage if it fails
+            match Self::decode_base64_with_meta(raw_part_data) {
+                Ok((decoded, meta)) => (decoded, true, Some(meta)),
+                Err(_) => {
+                    // Base64 is malformed - store raw bytes without decoding
+                    // This preserves the original content exactly
+                    tracing::debug!(
+                        "Base64 decode failed for part {}, storing raw content",
+                        part_index
+                    );
+                    (raw_part_data.to_vec(), false, None)
+                }
+            }
         } else {
             // For QP and non-encoded content: store raw bytes for byte-identical reconstruction
             (raw_part_data.to_vec(), false, None)

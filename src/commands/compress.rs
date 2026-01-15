@@ -99,7 +99,7 @@ pub fn run(
             let is_dir_output = p.is_dir()
                 || p.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR)
                 || p.to_string_lossy().ends_with('/')
-                || (base_path.is_some() && p.extension().map_or(true, |ext| ext != "mcr"));
+                || (base_path.is_some() && p.extension().is_none_or(|ext| ext != "mcr"));
 
             if is_dir_output {
                 // Output is a directory: preserve input structure with .mcr extension
@@ -331,13 +331,13 @@ pub fn run(
             .sum();
 
         let savings = raw_content.len() as i64 - output_data.len() as i64;
-        let savings_pct = if raw_content.len() > 0 {
+        let savings_pct = if !raw_content.is_empty() {
             savings as f64 / raw_content.len() as f64 * 100.0
         } else {
             0.0
         };
 
-        let structure_savings_pct = if structure_data.len() > 0 {
+        let structure_savings_pct = if !structure_data.is_empty() {
             (1.0 - compressed_structure.len() as f64 / structure_data.len() as f64) * 100.0
         } else {
             0.0

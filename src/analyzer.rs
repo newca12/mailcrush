@@ -263,7 +263,7 @@ impl MailSummary {
     pub fn get_reconstruction_map(&self) -> Vec<ReconstructionPart> {
         self.parts
             .iter()
-            .flat_map(|part| MailAnalyzer::flatten_parts(part))
+            .flat_map(MailAnalyzer::flatten_parts)
             .collect()
     }
 

@@ -224,7 +224,7 @@ fn main() -> Result<(), MailCrushError> {
         }
         Commands::Info { path, recursive } => {
             let files = collect_email_files(&path, recursive)?;
-            run_batch(&files, false, |file| info_cmd::run(file))?;
+            run_batch(&files, false, info_cmd::run)?;
         }
         Commands::List {
             path,
@@ -247,17 +247,17 @@ fn main() -> Result<(), MailCrushError> {
             // Filter out .mcr files - we don't want to compress already-compressed files
             let files: Vec<_> = files
                 .into_iter()
-                .filter(|f| f.extension().map_or(true, |ext| ext != "mcr"))
+                .filter(|f| f.extension().is_none_or(|ext| ext != "mcr"))
                 .collect();
             // If multiple files and output is specified, it must be a directory
-            if files.len() > 1 {
-                if let Some(ref out) = output {
-                    if out.exists() && !out.is_dir() {
-                        return Err(MailCrushError::ConfigError(
-                            "Cannot specify --output as a file with multiple input files. Use a directory as output instead.".to_string()
-                        ));
-                    }
-                }
+            if files.len() > 1
+                && let Some(ref out) = output
+                && out.exists()
+                && !out.is_dir()
+            {
+                return Err(MailCrushError::ConfigError(
+                    "Cannot specify --output as a file with multiple input files. Use a directory as output instead.".to_string()
+                ));
             }
             // Determine the base path for relative path computation
             let base_path = if path.is_dir() {
@@ -288,7 +288,7 @@ fn main() -> Result<(), MailCrushError> {
         }
         Commands::Validate { path, recursive } => {
             let files = collect_email_files(&path, recursive)?;
-            run_batch(&files, false, |file| validate::run(file))?;
+            run_batch(&files, false, validate::run)?;
         }
         Commands::Stats {
             path,
@@ -299,7 +299,7 @@ fn main() -> Result<(), MailCrushError> {
             if aggregate && files.len() > 1 {
                 stats::run_aggregate(&files)?;
             } else {
-                run_batch(&files, false, |file| stats::run(file))?;
+                run_batch(&files, false, stats::run)?;
             }
         }
         Commands::Read {
@@ -312,14 +312,14 @@ fn main() -> Result<(), MailCrushError> {
         } => {
             let files = collect_mcr_files(&path, recursive)?;
             // If multiple files and output is specified, it must be a directory
-            if files.len() > 1 {
-                if let Some(ref out) = output {
-                    if out.exists() && !out.is_dir() {
-                        return Err(MailCrushError::ConfigError(
-                            "Cannot specify --output as a file with multiple input files. Use a directory as output instead.".to_string()
-                        ));
-                    }
-                }
+            if files.len() > 1
+                && let Some(ref out) = output
+                && out.exists()
+                && !out.is_dir()
+            {
+                return Err(MailCrushError::ConfigError(
+                    "Cannot specify --output as a file with multiple input files. Use a directory as output instead.".to_string()
+                ));
             }
             // Determine the base path for relative path computation
             let base_path = if path.is_dir() {
@@ -379,15 +379,15 @@ where
     }
 
     stats.print_summary();
-    if let Some(start) = batch_start {
-        if files.len() > 1 {
-            let total_elapsed = start.elapsed();
-            println!(
-                "⏱️  Total time: {} ({}/file avg)",
-                format_duration(total_elapsed),
-                format_duration(total_elapsed / files.len() as u32)
-            );
-        }
+    if let Some(start) = batch_start
+        && files.len() > 1
+    {
+        let total_elapsed = start.elapsed();
+        println!(
+            "⏱️  Total time: {} ({}/file avg)",
+            format_duration(total_elapsed),
+            format_duration(total_elapsed / files.len() as u32)
+        );
     }
 
     Ok(())
