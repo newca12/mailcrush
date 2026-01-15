@@ -10,9 +10,16 @@ use mail_parser::{Encoding, MimeHeaders};
 use mailcrush::{CompressionAlgorithm, EmailCompressor, MailCrushError};
 
 /// Run the read command to decompress and display a .mcr file
+///
+/// - `file`: Path to the .mcr file to decompress
+/// - `output`: Optional output path (file or directory)
+/// - `base_path`: Base path for computing relative paths when output is a directory
+/// - `raw`: If true, output raw email content
+/// - `headers_only`: If true, show headers only
 pub fn run(
     file: &Path,
     output: Option<&Path>,
+    base_path: Option<&Path>,
     raw: bool,
     headers_only: bool,
 ) -> Result<(), MailCrushError> {
@@ -354,8 +361,49 @@ pub fn run(
     }
 
     // Output the result
-    if let Some(output_path) = output {
-        fs::write(output_path, &reconstructed)?;
+    if let Some(output) = output {
+        // Determine output path - similar logic to compress command
+        // Output is treated as a directory if:
+        // 1. It already exists and is a directory, OR
+        // 2. It ends with a path separator, OR
+        // 3. We have a base_path (multiple files mode) and it doesn't look like a file with .eml extension
+        let is_dir_output = output.is_dir()
+            || output
+                .to_string_lossy()
+                .ends_with(std::path::MAIN_SEPARATOR)
+            || output.to_string_lossy().ends_with('/')
+            || (base_path.is_some() && output.extension().map_or(true, |ext| ext != "eml"));
+
+        let output_path = if is_dir_output {
+            // Output is a directory: preserve input structure, remove .mcr extension
+            // Compute relative path from base_path to file
+            let relative = if let Some(base) = base_path {
+                file.strip_prefix(base)
+                    .unwrap_or(file.file_name().map(Path::new).unwrap_or(file))
+            } else {
+                file.file_name().map(Path::new).unwrap_or(file)
+            };
+
+            // Create output path: output_dir / relative_path with .mcr stripped
+            let out_file = output.join(relative);
+
+            // Remove .mcr extension if present (e.g., mail.eml.mcr -> mail.eml)
+            let out_file = if out_file.extension().map_or(false, |ext| ext == "mcr") {
+                out_file.with_extension("")
+            } else {
+                out_file
+            };
+
+            // Ensure parent directories exist
+            if let Some(parent) = out_file.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            out_file
+        } else {
+            output.to_path_buf()
+        };
+
+        fs::write(&output_path, &reconstructed)?;
         println!("✅ Decompressed email saved to: {:?}", output_path);
         println!("   Original size: {} bytes", reconstructed.len());
     } else if headers_only {

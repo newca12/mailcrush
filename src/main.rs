@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use mailcrush::{BatchStats, MailCrushError, collect_email_files};
+use mailcrush::{BatchStats, MailCrushError, collect_email_files, collect_mcr_files};
 
 mod commands;
 
@@ -161,11 +161,15 @@ enum Commands {
 
     /// Read and decompress a compressed mail file (.mcr)
     Read {
-        /// Path to compressed mail file (.mcr)
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
+        /// Path to compressed mail file (.mcr) or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
 
-        /// Output file path for decompressed email
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
+
+        /// Output file or directory path for decompressed email(s)
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -299,18 +303,33 @@ fn main() -> Result<(), MailCrushError> {
             }
         }
         Commands::Read {
-            file,
+            path,
+            recursive,
             output,
             raw,
             headers_only,
             timer,
         } => {
-            let start = if timer { Some(Instant::now()) } else { None };
-            read::run(&file, output.as_deref(), raw, headers_only)?;
-            if let Some(start) = start {
-                let elapsed = start.elapsed();
-                println!("\n⏱️  Time: {}", format_duration(elapsed));
+            let files = collect_mcr_files(&path, recursive)?;
+            // If multiple files and output is specified, it must be a directory
+            if files.len() > 1 {
+                if let Some(ref out) = output {
+                    if out.exists() && !out.is_dir() {
+                        return Err(MailCrushError::ConfigError(
+                            "Cannot specify --output as a file with multiple input files. Use a directory as output instead.".to_string()
+                        ));
+                    }
+                }
             }
+            // Determine the base path for relative path computation
+            let base_path = if path.is_dir() {
+                Some(path.as_path())
+            } else {
+                None
+            };
+            run_batch(&files, timer, |file| {
+                read::run(file, output.as_deref(), base_path, raw, headers_only)
+            })?;
         }
     }
 

@@ -49,6 +49,52 @@ fn collect_files_recursive(
     Ok(())
 }
 
+/// Collect compressed .mcr files from a path (file or directory)
+///
+/// If the path is a file, returns a vector containing just that file.
+/// If the path is a directory, returns all .mcr files found (recursively if specified).
+pub fn collect_mcr_files(path: &Path, recursive: bool) -> Result<Vec<PathBuf>, MailCrushError> {
+    if path.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    if !path.is_dir() {
+        return Err(MailCrushError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Path does not exist: {:?}", path),
+        )));
+    }
+
+    let mut files = Vec::new();
+    collect_mcr_files_recursive(path, recursive, &mut files)?;
+
+    files.sort();
+    Ok(files)
+}
+
+fn collect_mcr_files_recursive(
+    dir: &Path,
+    recursive: bool,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), MailCrushError> {
+    let entries = fs::read_dir(dir)?;
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() {
+            if path.extension().map_or(false, |ext| ext == "mcr") {
+                files.push(path);
+            }
+        } else if path.is_dir() && recursive {
+            collect_mcr_files_recursive(&path, recursive, files)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Format a file path for display (relative if possible)
 pub fn display_path(path: &Path) -> String {
     path.display().to_string()

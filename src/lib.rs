@@ -13,4 +13,4 @@ pub use compressor::{
     CompressedPart, CompressionAlgorithm, CompressionReport, EmailCompressor, PartCompressionReport,
 };
 pub use error::MailCrushError;
-pub use utils::{BatchStats, collect_email_files};
+pub use utils::{BatchStats, collect_email_files, collect_mcr_files};
