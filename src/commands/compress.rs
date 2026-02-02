@@ -4,7 +4,16 @@ use std::fs;
 use std::path::Path;
 use tracing::info;
 
-use mailcrush::{EmailCompressor, MailAnalyzer, MailCrushError};
+use mailcrush::{EmailCompressor, MailCrushError};
+
+/// Result of a compression operation containing size statistics
+#[derive(Debug, Default)]
+pub struct CompressionResult {
+    /// Original file size in bytes
+    pub original_size: u64,
+    /// Compressed archive size in bytes
+    pub archive_size: u64,
+}
 
 /// Run the compress command
 ///
@@ -13,74 +22,19 @@ use mailcrush::{EmailCompressor, MailAnalyzer, MailCrushError};
 /// - `base_path`: Base path for computing relative paths when output is a directory
 /// - `level`: Compression level (1-9)
 /// - `dry_run`: If true, only show analysis without compressing
+///
+/// Returns the compression result with original and archive sizes on success.
 pub fn run(
     file: &Path,
     output: Option<&Path>,
     base_path: Option<&Path>,
     level: u8,
     dry_run: bool,
-) -> Result<(), MailCrushError> {
+) -> Result<CompressionResult, MailCrushError> {
     info!("Compressing email: {:?}", file);
 
     // Read raw email content
     let raw_content = fs::read(file)?;
-
-    if dry_run {
-        // Dry run: show analysis without actually compressing
-        let summary = MailAnalyzer::load_and_analyze(file)?;
-
-        let base64_overhead: usize = summary
-            .parts
-            .iter()
-            .filter(|p| p.is_base64)
-            .map(|p| p.encoded_size.saturating_sub(p.size))
-            .sum();
-
-        let potential_size = summary.total_size.saturating_sub(base64_overhead);
-
-        println!("🔍 Compression Analysis (Dry Run)");
-        println!("{}", "─".repeat(50));
-        println!("Input file:       {:?}", file);
-        println!(
-            "Original size:    {} bytes ({:.2} KB)",
-            summary.total_size,
-            summary.total_size as f64 / 1024.0
-        );
-        println!("Base64 parts:     {}", summary.base64_count);
-        println!("Base64 overhead:  {} bytes", base64_overhead);
-        println!("Compression level: {}", level);
-        println!();
-        println!("📊 Estimated Results:");
-        println!(
-            "  After Base64 decoding: {} bytes ({:.2} KB)",
-            potential_size,
-            potential_size as f64 / 1024.0
-        );
-
-        if summary.total_size > 0 {
-            let savings_pct = base64_overhead as f64 / summary.total_size as f64 * 100.0;
-            println!(
-                "  Potential savings:     {} bytes ({:.1}%)",
-                base64_overhead, savings_pct
-            );
-        }
-
-        println!();
-        println!("💡 Note: Additional compression with zstd/lz4 would further reduce size.");
-
-        // Show algorithm selection preview
-        println!();
-        println!("📦 Compression Algorithm Selection:");
-        let compressor = EmailCompressor::new(level);
-        for (i, part) in summary.parts.iter().enumerate() {
-            let sample_data = vec![0u8; part.size.max(100)];
-            let algo = compressor.select_algorithm(&part.content_type, &sample_data);
-            let name = part.filename.as_deref().unwrap_or(&part.content_type);
-            println!("  Part {}: {} → {}", i + 1, name, algo);
-        }
-
-        return Ok(());
-    }
 
     // Create compressor and process email
     let compressor = EmailCompressor::new(level);
@@ -89,54 +43,90 @@ pub fn run(
     // Print the detailed report
     report.print_detailed_report();
 
-    // Determine output path
+    // Determine output path (only needed when not dry_run)
     // Output is treated as a directory if:
     // 1. It already exists and is a directory, OR
     // 2. It ends with a path separator, OR
     // 3. We have a base_path (multiple files mode) and it doesn't look like a file with .mcr extension
-    let output_path = match output {
-        Some(p) => {
-            let is_dir_output = p.is_dir()
-                || p.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR)
-                || p.to_string_lossy().ends_with('/')
-                || (base_path.is_some() && p.extension().is_none_or(|ext| ext != "mcr"));
+    let output_path = if dry_run {
+        // In dry_run mode, compute the path without creating directories
+        match output {
+            Some(p) => {
+                let is_dir_output = p.is_dir()
+                    || p.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR)
+                    || p.to_string_lossy().ends_with('/')
+                    || (base_path.is_some() && p.extension().is_none_or(|ext| ext != "mcr"));
 
-            if is_dir_output {
-                // Output is a directory: preserve input structure with .mcr extension
-                // Compute relative path from base_path to file
-                let relative = if let Some(base) = base_path {
-                    file.strip_prefix(base)
-                        .unwrap_or(file.file_name().map(Path::new).unwrap_or(file))
+                if is_dir_output {
+                    let relative = if let Some(base) = base_path {
+                        file.strip_prefix(base)
+                            .unwrap_or(file.file_name().map(Path::new).unwrap_or(file))
+                    } else {
+                        file.file_name().map(Path::new).unwrap_or(file)
+                    };
+                    let out_file = p.join(relative);
+                    let file_name = out_file
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "output".to_string());
+                    out_file.with_file_name(format!("{}.mcr", file_name))
                 } else {
-                    file.file_name().map(Path::new).unwrap_or(file)
-                };
-
-                // Create output path: output_dir / relative_path + .mcr
-                let out_file = p.join(relative);
-
-                // Append .mcr extension to the full filename (e.g., mail.eml -> mail.eml.mcr)
-                let file_name = out_file
+                    p.to_path_buf()
+                }
+            }
+            None => {
+                let file_name = file
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "output".to_string());
-                let out_file = out_file.with_file_name(format!("{}.mcr", file_name));
-
-                // Ensure parent directories exist
-                if let Some(parent) = out_file.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                out_file
-            } else {
-                p.to_path_buf()
+                file.with_file_name(format!("{}.mcr", file_name))
             }
         }
-        None => {
-            // Append .mcr extension to the full filename
-            let file_name = file
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "output".to_string());
-            file.with_file_name(format!("{}.mcr", file_name))
+    } else {
+        match output {
+            Some(p) => {
+                let is_dir_output = p.is_dir()
+                    || p.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR)
+                    || p.to_string_lossy().ends_with('/')
+                    || (base_path.is_some() && p.extension().is_none_or(|ext| ext != "mcr"));
+
+                if is_dir_output {
+                    // Output is a directory: preserve input structure with .mcr extension
+                    // Compute relative path from base_path to file
+                    let relative = if let Some(base) = base_path {
+                        file.strip_prefix(base)
+                            .unwrap_or(file.file_name().map(Path::new).unwrap_or(file))
+                    } else {
+                        file.file_name().map(Path::new).unwrap_or(file)
+                    };
+
+                    // Create output path: output_dir / relative_path + .mcr
+                    let out_file = p.join(relative);
+
+                    // Append .mcr extension to the full filename (e.g., mail.eml -> mail.eml.mcr)
+                    let file_name = out_file
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "output".to_string());
+                    let out_file = out_file.with_file_name(format!("{}.mcr", file_name));
+
+                    // Ensure parent directories exist
+                    if let Some(parent) = out_file.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    out_file
+                } else {
+                    p.to_path_buf()
+                }
+            }
+            None => {
+                // Append .mcr extension to the full filename
+                let file_name = file
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "output".to_string());
+                file.with_file_name(format!("{}.mcr", file_name))
+            }
         }
     };
 
@@ -317,8 +307,10 @@ pub fn run(
             }
         }
 
-        // Write output file
-        fs::write(&output_path, &output_data)?;
+        // Write output file (skip in dry_run mode)
+        if !dry_run {
+            fs::write(&output_path, &output_data)?;
+        }
 
         // Calculate statistics
         let parts_original_size: usize = part_infos
@@ -344,7 +336,14 @@ pub fn run(
         };
 
         println!();
-        println!("✅ Compressed email saved to: {:?}", output_path);
+        if dry_run {
+            println!(
+                "🔍 [DRY RUN] Would save compressed email to: {:?}",
+                output_path
+            );
+        } else {
+            println!("✅ Compressed email saved to: {:?}", output_path);
+        }
         println!("   Original size:         {} bytes", raw_content.len());
         println!("   Archive size:          {} bytes", output_data.len());
         println!(
@@ -366,16 +365,19 @@ pub fn run(
                 (1.0 - parts_compressed_size as f64 / parts_original_size as f64) * 100.0
             );
         }
+
+        Ok(CompressionResult {
+            original_size: raw_content.len() as u64,
+            archive_size: output_data.len() as u64,
+        })
     } else {
         println!();
         println!("⚠️ Compression verification failed!");
         println!("   Some parts could not be verified for lossless reconstruction.");
         println!("   The compressed file was NOT saved to preserve data integrity.");
 
-        return Err(MailCrushError::ConfigError(
+        Err(MailCrushError::ConfigError(
             "Reconstruction verification failed - compression aborted".to_string(),
-        ));
+        ))
     }
-
-    Ok(())
 }

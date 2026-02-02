@@ -107,6 +107,10 @@ pub struct BatchStats {
     pub success: usize,
     pub failed: usize,
     pub total_time: std::time::Duration,
+    /// Total original size in bytes (for compression operations)
+    pub total_original_size: u64,
+    /// Total archive size in bytes (for compression operations)
+    pub total_archive_size: u64,
 }
 
 impl BatchStats {
@@ -126,6 +130,11 @@ impl BatchStats {
         self.total_time += duration;
     }
 
+    pub fn add_compression_stats(&mut self, original_size: u64, archive_size: u64) {
+        self.total_original_size += original_size;
+        self.total_archive_size += archive_size;
+    }
+
     pub fn print_summary(&self) {
         if self.total > 1 {
             println!();
@@ -133,6 +142,30 @@ impl BatchStats {
                 "📊 Batch Summary: {} processed, {} succeeded, {} failed",
                 self.total, self.success, self.failed
             );
+            // Print compression stats if available
+            if self.total_original_size > 0 {
+                let savings = self.total_original_size as i64 - self.total_archive_size as i64;
+                let savings_pct = if self.total_original_size > 0 {
+                    savings as f64 / self.total_original_size as f64 * 100.0
+                } else {
+                    0.0
+                };
+                println!();
+                println!(
+                    "   Total original size:   {} bytes ({:.2} MB)",
+                    self.total_original_size,
+                    self.total_original_size as f64 / 1_048_576.0
+                );
+                println!(
+                    "   Total archive size:    {} bytes ({:.2} MB)",
+                    self.total_archive_size,
+                    self.total_archive_size as f64 / 1_048_576.0
+                );
+                println!(
+                    "   Total space savings:   {} bytes ({:.1}%)",
+                    savings, savings_pct
+                );
+            }
         }
     }
 }

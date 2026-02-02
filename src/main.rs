@@ -265,7 +265,7 @@ fn main() -> Result<(), MailCrushError> {
             } else {
                 None
             };
-            run_batch(&files, timer, |file| {
+            run_compress_batch(&files, timer, |file| {
                 compress::run(file, output.as_deref(), base_path, level, dry_run)
             })?;
         }
@@ -364,6 +364,64 @@ where
         match op(file) {
             Ok(()) => {
                 stats.record_success();
+                if let Some(start) = file_start {
+                    stats.add_time(start.elapsed());
+                    if !show_separator {
+                        println!("⏱️  Time: {}", format_duration(start.elapsed()));
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("❌ Error processing {:?}: {}", file, e);
+                stats.record_failure();
+            }
+        }
+    }
+
+    stats.print_summary();
+    if let Some(start) = batch_start
+        && files.len() > 1
+    {
+        let total_elapsed = start.elapsed();
+        println!(
+            "⏱️  Total time: {} ({}/file avg)",
+            format_duration(total_elapsed),
+            format_duration(total_elapsed / files.len() as u32)
+        );
+    }
+
+    Ok(())
+}
+
+/// Run compress command on multiple files with compression-specific batch statistics
+fn run_compress_batch<F>(files: &[PathBuf], timer: bool, mut op: F) -> Result<(), MailCrushError>
+where
+    F: FnMut(&std::path::Path) -> Result<compress::CompressionResult, MailCrushError>,
+{
+    if files.is_empty() {
+        println!("📭 No email files found.");
+        return Ok(());
+    }
+
+    let mut stats = BatchStats::new();
+    stats.total = files.len();
+
+    let show_separator = files.len() > 1;
+    let batch_start = if timer { Some(Instant::now()) } else { None };
+
+    for (i, file) in files.iter().enumerate() {
+        if show_separator {
+            if i > 0 {
+                println!();
+            }
+            println!("━━━ {} ━━━", file.display());
+        }
+
+        let file_start = if timer { Some(Instant::now()) } else { None };
+        match op(file) {
+            Ok(result) => {
+                stats.record_success();
+                stats.add_compression_stats(result.original_size, result.archive_size);
                 if let Some(start) = file_start {
                     stats.add_time(start.elapsed());
                     if !show_separator {
