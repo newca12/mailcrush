@@ -1,0 +1,21 @@
+[package]
+name = "mailcrush-extractor"
+version = "0.1.0"
+authors = ["Olivier ROLAND <newca12@users.noreply.github.com>"]
+description = "Extract text content from email files – library companion to mailcrush"
+homepage = "https://github.com/newca12/mailcrush"
+repository = "https://github.com/newca12/mailcrush.git"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+html2text = "0.16.7"
+mail-parser = { version = "0.11.2", features = ["full_encoding"] }
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
+
+[[example]]
+name = "extract_text"
+required-features = ["tokio"]

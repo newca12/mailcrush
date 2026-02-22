@@ -180,6 +180,14 @@ enum Commands {
         /// Show attachment names and sizes at the bottom
         #[arg(short, long)]
         attachments: bool,
+
+        /// Show all headers (From, To, Cc, Date, Subject); default shows only Subject
+        #[arg(long)]
+        all_headers: bool,
+
+        /// Hide the separator line between headers and body
+        #[arg(long)]
+        no_separator: bool,
     },
 
     /// Read and decompress a compressed mail file (.mcr)
@@ -331,10 +339,19 @@ fn main() -> Result<(), MailCrushError> {
             text,
             html2text,
             attachments,
+            all_headers,
+            no_separator,
         } => {
             let files = collect_email_files(&path, recursive)?;
             run_batch(&files, false, |file| {
-                show::run(file, text, html2text, attachments)
+                show::run(
+                    file,
+                    text,
+                    html2text,
+                    attachments,
+                    all_headers,
+                    !no_separator,
+                )
             })?;
         }
         Commands::Read {

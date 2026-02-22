@@ -36,3 +36,16 @@ impl From<std::io::Error> for MailCrushError {
         Self::IoError(err)
     }
 }
+
+impl From<mailcrush_extractor::Error> for MailCrushError {
+    fn from(err: mailcrush_extractor::Error) -> Self {
+        match err {
+            mailcrush_extractor::Error::EmptyMail => Self::EmptyMail,
+            mailcrush_extractor::Error::ParseError(msg) => Self::ParseError(msg),
+            mailcrush_extractor::Error::NoContent => {
+                Self::ParseError("no text content available".to_string())
+            }
+            mailcrush_extractor::Error::Io(e) => Self::IoError(e),
+        }
+    }
+}
