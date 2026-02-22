@@ -476,7 +476,7 @@ dependencies = [
  "html2text",
  "lz4_flex",
  "mail-parser",
- "mailcrush-extractor",
+ "mailcrush-extractor 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "sha2",
  "tokio",
@@ -493,6 +493,16 @@ dependencies = [
  "html2text",
  "mail-parser",
  "tokio",
+]
+
+[[package]]
+name = "mailcrush-extractor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a44443904b37c20e7fa08aa54e939fd9d8a4f8900a16bb2a36d8b51e66a6417f"
+dependencies = [
+ "html2text",
+ "mail-parser",
 ]
 
 [[package]]
