@@ -1,6 +1,6 @@
 [package]
 name = "mailcrush"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Olivier ROLAND <newca12@users.noreply.github.com>"]
 description = "A high-efficiency mail lossless compression tool that deconstructs emails for maximum compression"
 homepage = "https://github.com/newca12/mailcrush"
@@ -12,11 +12,12 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 base64 = "0.22"
+html2text = "0.14"
 chrono = "0.4.43"
-clap = { version = "4.5.56", features = ["derive"] }
-flate2 = "1.1"
+clap = { version = "4.5.60", features = ["derive"] }
+flate2 = "1.1.9"
 lz4_flex = "0.12.0"
-mail-parser = { version = "0.11.1", features = ["full_encoding", "serde"] } 
+mail-parser = { version = "0.11.2", features = ["full_encoding", "serde"] } 
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.10"
 tokio = { version = "1.49.0", features = ["full"] }

@@ -12,7 +12,7 @@ use mailcrush::{BatchStats, MailCrushError, collect_email_files, collect_mcr_fil
 
 mod commands;
 
-use commands::{analyze, compress, extract, info as info_cmd, list, read, stats, validate};
+use commands::{analyze, compress, extract, info as info_cmd, list, read, show, stats, validate};
 
 /// MailCrush - High-efficiency mail lossless compression tool
 #[derive(Parser)]
@@ -159,6 +159,29 @@ enum Commands {
         aggregate: bool,
     },
 
+    /// Display email content like Thunderbird or Outlook
+    Show {
+        /// Path to email file or directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Process directories recursively
+        #[arg(short, long)]
+        recursive: bool,
+
+        /// Display the plain text version instead of HTML
+        #[arg(short, long)]
+        text: bool,
+
+        /// Convert HTML to formatted plain text for display
+        #[arg(long)]
+        html2text: bool,
+
+        /// Show attachment names and sizes at the bottom
+        #[arg(short, long)]
+        attachments: bool,
+    },
+
     /// Read and decompress a compressed mail file (.mcr)
     Read {
         /// Path to compressed mail file (.mcr) or directory
@@ -301,6 +324,18 @@ fn main() -> Result<(), MailCrushError> {
             } else {
                 run_batch(&files, false, stats::run)?;
             }
+        }
+        Commands::Show {
+            path,
+            recursive,
+            text,
+            html2text,
+            attachments,
+        } => {
+            let files = collect_email_files(&path, recursive)?;
+            run_batch(&files, false, |file| {
+                show::run(file, text, html2text, attachments)
+            })?;
         }
         Commands::Read {
             path,
