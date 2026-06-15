@@ -134,10 +134,10 @@ pub fn run_aggregate(files: &[std::path::PathBuf]) -> Result<(), MailCrushError>
         );
     }
 
-    if total_files > 0 {
+    if let Some(avg_size) = total_size.checked_div(total_files) {
         println!();
         println!("📈 Averages per email:");
-        println!("   Size:        {:>10} bytes", total_size / total_files);
+        println!("   Size:        {:>10} bytes", avg_size);
         println!("   Parts:       {:>10}", total_parts / total_files);
         println!("   Attachments: {:>10}", total_attachments / total_files);
     }

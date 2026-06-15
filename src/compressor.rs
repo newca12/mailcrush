@@ -956,7 +956,7 @@ impl EmailCompressor {
             .enumerate()
             .map(|(i, p)| (i, p.offset_body as usize, p.offset_end as usize))
             .collect();
-        parts_with_offsets.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by offset descending
+        parts_with_offsets.sort_by_key(|b| std::cmp::Reverse(b.1)); // Sort by offset descending
 
         for (part_idx, offset_start, offset_end) in parts_with_offsets {
             // Skip if offsets are out of bounds for current reconstructed email
