@@ -15,7 +15,7 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 base64 = "0.22"
-html2text = "0.16.7"
+html2text = "0.17.1"
 mailcrush-extractor = "0.1.0"
 chrono = "0.4.43"
 clap = { version = "4.5.60", features = ["derive"] }

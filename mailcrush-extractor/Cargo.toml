@@ -9,7 +9,7 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
-html2text = "0.16.7"
+html2text = "0.17.1"
 mail-parser = { version = "0.11.2", features = ["full_encoding"] }
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"], optional = true }
 
