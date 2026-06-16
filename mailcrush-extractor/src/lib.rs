@@ -187,8 +187,10 @@ pub async fn get_text_content(
     } else if html2text {
         match message.body_html(0) {
             Some(html) => {
-                let rendered =
-                    html2text::from_read(html.as_bytes(), 78).unwrap_or_else(|_| html.to_string());
+                let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    html2text::from_read(html.as_bytes(), 78).unwrap_or_else(|_| html.to_string())
+                }))
+                .unwrap_or_else(|_| strip_html_tags(&html));
                 let _ = writeln!(out, "{rendered}");
             }
             None => match message.body_text(0) {
