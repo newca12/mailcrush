@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "mailcrush-extractor"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "html2text",
  "mail-parser",
